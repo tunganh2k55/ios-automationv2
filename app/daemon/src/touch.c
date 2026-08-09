@@ -58,20 +58,33 @@ static int read_line(int fd, char *buf, size_t cap) {
 }
 
 // Handshake: hỏi client là app nào + kích thước màn.
+// RETRY: nếu client trả 0x0 (cache chưa sẵn sàng trên iOS 15.x), thử lại vài lần.
 static void query_info(int fd, char *bundle_out, size_t bundle_len) {
     bundle_out[0] = '\0';
     char drain[256];
     while (recv(fd, drain, sizeof(drain), MSG_DONTWAIT) > 0) { /* xả reply cũ */ }
-    if (write(fd, "INFO\n", 5) <= 0) return;
-    char buf[256];
-    // Timeout DÀI (2.5s): lúc SpringBoard boot nó bận nên INFO về chậm; nếu timeout ngắn →
-    // bundle "?" → prefer_sb không nhận ra SpringBoard.
-    if (read_line_to(fd, buf, sizeof(buf), 2500) <= 0) return;
-    // "OK <bundle> <w> <h>"
-    char bid[128]; int w = 0, h = 0;
-    if (sscanf(buf, "OK %127s %d %d", bid, &w, &h) >= 1) {
-        snprintf(bundle_out, bundle_len, "%s", bid);
-        if (w > 0 && h > 0) { g_screen_w = w; g_screen_h = h; }
+
+    // Thử tối đa 3 lần, mỗi lần cách 300ms (cho main thread kịp điền cache screen size).
+    for (int attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) usleep(300 * 1000);   // đợi 300ms trước khi thử lại
+        if (write(fd, "INFO\n", 5) <= 0) return;
+        char buf[256];
+        // Timeout DÀI (2.5s): lúc SpringBoard boot nó bận nên INFO về chậm; nếu timeout ngắn →
+        // bundle "?" → prefer_sb không nhận ra SpringBoard.
+        if (read_line_to(fd, buf, sizeof(buf), 2500) <= 0) return;
+        // "OK <bundle> <w> <h>"
+        char bid[128]; int w = 0, h = 0;
+        if (sscanf(buf, "OK %127s %d %d", bid, &w, &h) >= 1) {
+            snprintf(bundle_out, bundle_len, "%s", bid);
+            if (w > 0 && h > 0) {
+                g_screen_w = w; g_screen_h = h;
+                return;   // thành công, có screen size
+            }
+            // w=0 hoặc h=0: client chưa sẵn sàng, thử lại
+            if (attempt < 2) {
+                log_msg("touch: INFO từ %s trả 0x0, thử lại (%d/3)", bid, attempt + 2);
+            }
+        }
     }
 }
 

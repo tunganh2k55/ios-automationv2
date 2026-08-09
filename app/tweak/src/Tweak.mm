@@ -2514,14 +2514,30 @@ static volatile int gAppActive = 0;
 // (gặp trên iPhone9,1 iOS 15.8.8). Cache do main điền (an toàn) rồi INFO chỉ đọc số → không đụng UIScreen.
 static volatile int gScreenW = 0, gScreenH = 0;
 // Điền cache trên MAIN THREAD (bọc để gọi được từ bất kỳ đâu). An toàn: chạy khi main rảnh.
-static void IARefreshScreenSize(void) {
+// wait=YES: đợi main thread điền xong (tối đa 500ms) — dùng cho INFO handshake.
+// wait=NO: async, không chờ — dùng cho các trường hợp khác.
+static void IARefreshScreenSizeWait(BOOL wait) {
     void (^grab)(void) = ^{
         @try { CGSize s = [UIScreen mainScreen].bounds.size;
                if (s.width > 0 && s.height > 0) { gScreenW = (int)s.width; gScreenH = (int)s.height; } }
         @catch (__unused NSException *e) {}
     };
-    if ([NSThread isMainThread]) grab(); else dispatch_async(dispatch_get_main_queue(), grab);
+    if ([NSThread isMainThread]) {
+        grab();
+    } else if (wait) {
+        // Đợi main thread nhưng với timeout để tránh deadlock.
+        // Dùng semaphore thay vì dispatch_sync (an toàn hơn nếu main đang bận).
+        dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            grab();
+            dispatch_semaphore_signal(sem);
+        });
+        dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC));
+    } else {
+        dispatch_async(dispatch_get_main_queue(), grab);
+    }
 }
+static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
 
 @interface IAClient : NSObject
 @property (nonatomic) int fd;
@@ -2619,9 +2635,11 @@ static void IARefreshScreenSize(void) {
             // cold-boot UIScreen chưa +initialize, message từ nền sẽ kích +initialize trên nền → FBScene
             // main-thread-violation → SIGTRAP → Safe Mode loop (xem IARefreshScreenSize). Bundle lấy trực
             // tiếp (an toàn off-main, luôn đúng → prefer_sb nhận ra SpringBoard ngay). Kích thước lấy từ
-            // CACHE do main điền; nếu chưa kịp (0 0) daemon vẫn đăng ký đúng bundle & sẽ INFO lại sau.
+            // CACHE do main điền.
+            // FIX: Nếu cache chưa có, ĐỢI main thread điền (tối đa 500ms) thay vì trả 0x0.
+            // Daemon sẽ retry nếu vẫn nhận 0x0, nhưng đợi ở đây giảm latency handshake.
             NSString *bid = [[NSBundle mainBundle] bundleIdentifier] ?: @"?";
-            if (gScreenW == 0 || gScreenH == 0) IARefreshScreenSize();   // yêu cầu main điền cho lần sau
+            if (gScreenW == 0 || gScreenH == 0) IARefreshScreenSizeWait(YES);
             return [NSString stringWithFormat:@"OK %@ %d %d", bid, gScreenW, gScreenH];
         }
         if ([verb isEqualToString:@"PING"])
