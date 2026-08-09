@@ -2890,13 +2890,22 @@ static void IAInit(void) {
             }];
           }
         });
-        // AX + khởi động client: nặng khoá nhất → để trong dispatch_after 1s (chạy khi main runloop đã
+        // AX + khởi động client: nặng khoá nhất → để trong dispatch_after (chạy khi main runloop đã
         // quay, qua hẳn cửa sổ nguy hiểm). SpringBoard có thể KHÔNG phát DidBecomeActive và KHÔNG ở
         // state Active → phải chủ động start ở đây.
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // iOS 15.x cần thời gian lâu hơn để ổn định — tăng delay lên 2s cho SpringBoard.
+        NSTimeInterval delay = isSB ? 2.0 : 1.0;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             IAEnableAX();   // bật AX cho MỌI app SAU launch (đã qua cửa sổ deadlock) — WebKit dựng cây AX lấy chữ trong WebView
             @try { if ([UIApplication sharedApplication].applicationState == UIApplicationStateActive) gAppActive = 1; } @catch (__unused NSException *e) {}
-            if (isSB || gAppActive) [[IAClient shared] start];
+            // LUÔN start cho SpringBoard (dù state có thể không Active trên iOS 15).
+            // Với app thường, chỉ start khi foreground.
+            if (isSB) {
+                gAppActive = 1;   // SpringBoard luôn coi như active
+                [[IAClient shared] start];
+            } else if (gAppActive) {
+                [[IAClient shared] start];
+            }
         });
     }
 }
