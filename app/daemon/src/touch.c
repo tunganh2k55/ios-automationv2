@@ -13,6 +13,7 @@
 #include <arpa/inet.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <sys/sysctl.h>
 
 // IPC daemon <-> tweak (UIKit user-mode). Daemon = SERVER, giữ NHIỀU client
 // (mỗi app foreground inject tweak là 1 client + SpringBoard). Khi TAP: ưu tiên
@@ -29,7 +30,87 @@ static char g_bundle[MAX_CLIENTS][128];
 static int g_nclients = 0;
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 
-static int g_screen_w = 390, g_screen_h = 844;   // cập nhật từ handshake INFO
+static int g_screen_w = 0, g_screen_h = 0;   // set từ device model fallback hoặc handshake INFO
+
+// Fallback screen size dựa trên device model (hw.machine) khi tweak chưa kết nối.
+// Point size (không phải pixel): iOS dùng point cho tọa độ UI.
+static struct { const char *model; int w; int h; } g_model_screen[] = {
+    // iPhone 6/6s/7/8/SE2/SE3 (4.7")
+    {"iPhone7,2",  375, 667},   // iPhone 6
+    {"iPhone8,1",  375, 667},   // iPhone 6s
+    {"iPhone9,1",  375, 667},   // iPhone 7 (CDMA)
+    {"iPhone9,3",  375, 667},   // iPhone 7 (GSM)
+    {"iPhone10,1", 375, 667},   // iPhone 8 (CDMA)
+    {"iPhone10,4", 375, 667},   // iPhone 8 (GSM)
+    {"iPhone12,8", 375, 667},   // iPhone SE 2nd
+    {"iPhone14,6", 375, 667},   // iPhone SE 3rd
+    // iPhone 6+/6s+/7+/8+ (5.5")
+    {"iPhone7,1",  414, 736},   // iPhone 6 Plus
+    {"iPhone8,2",  414, 736},   // iPhone 6s Plus
+    {"iPhone9,2",  414, 736},   // iPhone 7 Plus (CDMA)
+    {"iPhone9,4",  414, 736},   // iPhone 7 Plus (GSM)
+    {"iPhone10,2", 414, 736},   // iPhone 8 Plus (CDMA)
+    {"iPhone10,5", 414, 736},   // iPhone 8 Plus (GSM)
+    // iPhone X/Xs/11 Pro (5.8")
+    {"iPhone10,3", 375, 812},   // iPhone X (CDMA)
+    {"iPhone10,6", 375, 812},   // iPhone X (GSM)
+    {"iPhone11,2", 375, 812},   // iPhone Xs
+    {"iPhone12,3", 375, 812},   // iPhone 11 Pro
+    // iPhone Xr/11 (6.1" LCD)
+    {"iPhone11,8", 414, 896},   // iPhone Xr
+    {"iPhone12,1", 414, 896},   // iPhone 11
+    // iPhone Xs Max/11 Pro Max (6.5")
+    {"iPhone11,4", 414, 896},   // iPhone Xs Max (China)
+    {"iPhone11,6", 414, 896},   // iPhone Xs Max (Global)
+    {"iPhone12,5", 414, 896},   // iPhone 11 Pro Max
+    // iPhone 12 mini/13 mini (5.4")
+    {"iPhone13,1", 375, 812},   // iPhone 12 mini
+    {"iPhone14,4", 375, 812},   // iPhone 13 mini
+    // iPhone 12/12 Pro/13/13 Pro/14 (6.1" OLED)
+    {"iPhone13,2", 390, 844},   // iPhone 12
+    {"iPhone13,3", 390, 844},   // iPhone 12 Pro
+    {"iPhone14,5", 390, 844},   // iPhone 13
+    {"iPhone14,2", 390, 844},   // iPhone 13 Pro
+    {"iPhone14,7", 390, 844},   // iPhone 14
+    // iPhone 12 Pro Max/13 Pro Max/14 Plus (6.7")
+    {"iPhone13,4", 428, 926},   // iPhone 12 Pro Max
+    {"iPhone14,3", 428, 926},   // iPhone 13 Pro Max
+    {"iPhone14,8", 428, 926},   // iPhone 14 Plus
+    // iPhone 14 Pro/15/15 Pro (6.1" Dynamic Island)
+    {"iPhone15,2", 393, 852},   // iPhone 14 Pro
+    {"iPhone15,4", 393, 852},   // iPhone 15
+    {"iPhone16,1", 393, 852},   // iPhone 15 Pro
+    // iPhone 14 Pro Max/15 Plus/15 Pro Max (6.7" Dynamic Island)
+    {"iPhone15,3", 430, 932},   // iPhone 14 Pro Max
+    {"iPhone15,5", 430, 932},   // iPhone 15 Plus
+    {"iPhone16,2", 430, 932},   // iPhone 15 Pro Max
+    // iPhone 16
+    {"iPhone17,3", 393, 852},   // iPhone 16
+    {"iPhone17,4", 393, 852},   // iPhone 16 Pro
+    {"iPhone17,1", 430, 932},   // iPhone 16 Plus
+    {"iPhone17,2", 430, 932},   // iPhone 16 Pro Max
+    {NULL, 0, 0}
+};
+
+static void init_screen_from_model(void) {
+    char machine[64] = {0};
+    size_t sz = sizeof(machine);
+    if (sysctlbyname("hw.machine", machine, &sz, NULL, 0) != 0) {
+        g_screen_w = 390; g_screen_h = 844;   // fallback mặc định
+        log_msg("touch: không đọc được hw.machine, dùng default %dx%d", g_screen_w, g_screen_h);
+        return;
+    }
+    for (int i = 0; g_model_screen[i].model; i++) {
+        if (strcmp(machine, g_model_screen[i].model) == 0) {
+            g_screen_w = g_model_screen[i].w;
+            g_screen_h = g_model_screen[i].h;
+            log_msg("touch: model %s → màn %dx%d (fallback)", machine, g_screen_w, g_screen_h);
+            return;
+        }
+    }
+    g_screen_w = 390; g_screen_h = 844;
+    log_msg("touch: model %s không trong bảng, dùng default %dx%d", machine, g_screen_w, g_screen_h);
+}
 
 static void remove_client_locked(int idx) {
     close(g_clients[idx]);
@@ -137,6 +218,7 @@ static void *accept_loop(void *arg) {
 }
 
 void touch_init(void) {
+    init_screen_from_model();   // fallback screen size từ device model trước khi tweak kết nối
     pthread_t th;
     if (pthread_create(&th, NULL, accept_loop, NULL) == 0)
         pthread_detach(th);
