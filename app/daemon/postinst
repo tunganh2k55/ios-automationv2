@@ -1,0 +1,7 @@
+#!/bin/sh
+# Bootstrap + (re)start daemon sau khi cài (rootless launchctl).
+PLIST=/var/jb/Library/LaunchDaemons/com.iosauto.daemon.plist
+/var/jb/bin/launchctl bootstrap system "$PLIST" 2>/dev/null
+/var/jb/bin/launchctl enable system/com.iosauto.daemon 2>/dev/null
+/var/jb/bin/launchctl kickstart -k system/com.iosauto.daemon 2>/dev/null
+exit 0

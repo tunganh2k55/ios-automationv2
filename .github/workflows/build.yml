@@ -1,0 +1,144 @@
+name: Build .deb
+
+on:
+  push:
+    branches: [main]
+    paths: ["app/**", ".github/workflows/build.yml"]
+  workflow_dispatch:
+
+# Dự án nằm trong app/ (daemon, app, tweak). web-license/ là website Node, không build ở đây.
+jobs:
+  build:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools (ldid, dpkg)
+        run: brew install ldid dpkg
+
+      - name: Setup Theos
+        run: |
+          export THEOS=$HOME/theos
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+          git clone --quiet --recursive https://github.com/theos/theos.git "$THEOS"
+          rm -rf "$THEOS/sdks"
+          git clone --quiet https://github.com/theos/sdks.git "$THEOS/sdks"
+
+      - name: Fetch Lua 5.4 (MIT) cho daemon
+        run: |
+          curl -sL https://www.lua.org/ftp/lua-5.4.6.tar.gz -o /tmp/lua.tgz
+          tar xzf /tmp/lua.tgz -C /tmp
+          mkdir -p app/daemon/lua
+          cp /tmp/lua-5.4.6/src/*.c /tmp/lua-5.4.6/src/*.h app/daemon/lua/
+          rm -f app/daemon/lua/lua.c app/daemon/lua/luac.c   # bỏ file có main()
+          ls app/daemon/lua | head
+
+      - name: Build daemon
+        run: |
+          cd app/daemon
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+
+      # Đồng bộ version app (Info.plist) theo app/dist/control → app hiện đúng version gói Sileo.
+      - name: Sync app version from dist/control
+        run: |
+          VER=$(awk -F': ' '/^Version:/{print $2; exit}' app/dist/control)
+          echo "app CFBundleShortVersionString → $VER"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VER" app/app/Resources/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VER" app/app/Resources/Info.plist
+
+      - name: Build app
+        run: |
+          cd app/app
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+
+      - name: Build tweak (touch, safe element-activation)
+        run: |
+          cd app/tweak
+          make clean || true
+          make package FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless
+
+      - name: Collect .deb
+        run: |
+          mkdir -p out
+          cp app/daemon/packages/*.deb out/ 2>/dev/null || true
+          cp app/app/packages/*.deb out/ 2>/dev/null || true
+          cp app/tweak/packages/*.deb out/ 2>/dev/null || true
+          ls -la out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iosauto-debs
+          path: out/*.deb
+          if-no-files-found: error
+
+      # GỘP 3 gói con → 1 gói com.iosauto (khách cài 1 lần, tự thay 3 gói cũ qua Conflicts/Replaces).
+      - name: Merge into single package (com.iosauto)
+        run: |
+          python3 app/repo/merge_deb.py out out_merged
+          ls -la out_merged
+
+      - name: Upload merged package
+        uses: actions/upload-artifact@v4
+        with:
+          name: iosauto-merged
+          path: out_merged/*.deb
+          if-no-files-found: error
+
+      # Sinh repo Sileo TĨNH từ gói GỘP (dùng app/dist/control).
+      - name: Generate Sileo repo
+        env:
+          APT_URL: ${{ secrets.APT_URL }}
+        run: |
+          python3 app/repo/make_repo.py out_merged out_merged/repo "${APT_URL:-https://iosautos.com/repo}"
+          ls -la out_merged/repo
+
+      - name: Upload repo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: iosauto-repo
+          path: out_merged/repo/**
+          if-no-files-found: error
+
+      # Đẩy repo lên VPS (apt.iosautos.com) qua rsync/SSH. Cần secrets APT_* (xem repo/README.md).
+      # Không có secrets → bỏ qua êm (repo vẫn có trong artifact 'iosauto-repo').
+      - name: Deploy repo to VPS
+        env:
+          APT_HOST: ${{ secrets.APT_HOST }}
+          APT_USER: ${{ secrets.APT_USER }}
+          APT_PATH: ${{ secrets.APT_PATH }}
+          APT_PORT: ${{ secrets.APT_PORT }}
+          APT_SSH_KEY: ${{ secrets.APT_SSH_KEY }}
+        run: |
+          if [ -z "$APT_HOST" ] || [ -z "$APT_SSH_KEY" ]; then
+            echo "⏭  Chưa cấu hình secrets APT_* → bỏ qua đẩy repo (dùng artifact iosauto-repo)."
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          printf '%s\n' "$APT_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          PORT="${APT_PORT:-22}"
+          # Additive (KHÔNG --delete) để tránh xoá nhầm file trên VPS nếu APT_PATH cấu hình sai.
+          # .deb cũ còn lại vô hại (Packages chỉ trỏ bản hiện tại); prune tay khi cần.
+          rsync -az \
+            -e "ssh -i ~/.ssh/id_deploy -p $PORT -o StrictHostKeyChecking=accept-new" \
+            out_merged/repo/ "$APT_USER@$APT_HOST:$APT_PATH/"
+          echo "✓ Đã đẩy repo lên $APT_HOST:$APT_PATH"
+
+      # Đẩy .deb sang nhánh orphan 'ci-builds' để lấy về bằng git (repo private).
+      - name: Publish debs to ci-builds branch
+        run: |
+          cd out
+          git init -q
+          git config user.email "ci@iosauto.local"
+          git config user.name "iosauto-ci"
+          git checkout -q --orphan ci-builds
+          git add -A
+          git commit -q -m "debs ${GITHUB_SHA}"
+          git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-builds
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

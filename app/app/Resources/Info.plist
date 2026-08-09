@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>iOSAuto</string>
+	<key>CFBundleDisplayName</key>
+	<string>iOSAuto</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.iosauto.app</string>
+	<key>CFBundleExecutable</key>
+	<string>iOSAutoApp</string>
+	<!-- ĐỒNG BỘ với app/dist/control (CI ghi đè theo Version của gói lúc build). -->
+	<key>CFBundleVersion</key>
+	<string>0.7.4</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.7.4</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>MinimumOSVersion</key>
+	<string>15.0</string>
+	<key>UIDeviceFamily</key>
+	<array><integer>1</integer></array>
+	<!-- Icon app (từ logo.png) -->
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconName</key>
+			<string>AppIcon</string>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon20x20</string>
+				<string>AppIcon29x29</string>
+				<string>AppIcon40x40</string>
+				<string>AppIcon60x60</string>
+			</array>
+		</dict>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+	<!-- Bắt buộc: nếu không có, app không launch đúng -->
+	<key>UILaunchScreen</key>
+	<dict/>
+	<!-- Cho phép WKWebView gọi http://127.0.0.1 (ATS chặn http mặc định) -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Quyền LAN iOS 14+ -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Điều khiển thiết bị này qua web local.</string>
+	<!-- Quyền camera: quét QR license để kích hoạt bản quyền -->
+	<key>NSCameraUsageDescription</key>
+	<string>Dùng camera để quét mã QR license kích hoạt bản quyền.</string>
+</dict>
+</plist>

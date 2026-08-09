@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOSAuto License — Đơn hàng</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="inner">
+      <a class="brand" href="/dashboard"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> iOSAuto License</a>
+      <div class="navlinks">
+        <a href="/dashboard">Cửa hàng</a>
+        <a href="/orders" class="on">Đơn hàng</a>
+        <a href="/license">License của tôi</a>
+        <a href="/setting">Cài đặt</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost" id="logout">Đăng xuất</button>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <h1>Đơn hàng của tôi</h1>
+    <div class="sub">Theo dõi các đơn: <b>chờ thanh toán</b>, <b>đã thanh toán</b>, <b>đã hết hạn</b>. Mỗi đơn chờ có hiệu lực tối đa <b>15 phút</b> — quá giờ sẽ tự chuyển sang <b>đã hết hạn</b> và không xử lý nữa.</div>
+
+    <div class="tiles" id="orderTiles"></div>
+
+    <div class="card tablewrap">
+      <table>
+        <thead><tr><th>Mã đơn</th><th>Tool</th><th>Gói</th><th>Số tiền</th><th>Trạng thái</th><th>Ngày tạo</th><th>Còn lại</th></tr></thead>
+        <tbody id="orderBody"></tbody>
+      </table>
+      <div class="msg" id="orderMsg"></div>
+    </div>
+  </div>
+
+  <script src="/orders.js"></script>
+</body>
+</html>

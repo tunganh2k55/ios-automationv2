@@ -1,0 +1,10 @@
+{
+  "tools": [
+    {
+      "slug": "pokemontool",
+      "name": "PokemonTool",
+      "version": "1.0.9",
+      "manifest": "/tool/pokemontool/latest.json"
+    }
+  ]
+}

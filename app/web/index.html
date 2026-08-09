@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>iOSAuto</title>
+  <link rel="icon" type="image/png" href="logo.png">
+  <link rel="apple-touch-icon" href="logo.png">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* Công cụ Chụp & cắt ảnh (Helper) */
+    .imgtool{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:1000;}
+    .imgtool[hidden]{display:none;}
+    .imgtool-box{background:var(--panel,#1c1c1e);color:inherit;border-radius:14px;width:min(94vw,1100px);max-height:92vh;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 10px 40px rgba(0,0,0,.5);}
+    .imgtool-head,.imgtool-bar{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid rgba(128,128,128,.2);}
+    .imgtool-bar{flex-wrap:wrap;}
+    .imgtool-head strong{flex:1;}
+    .imgtool-bar .script-name{flex:0 0 190px;}
+    .imgtool-body{display:flex;gap:12px;padding:12px 14px;overflow:auto;}
+    .imgtool-stage{position:relative;flex:0 1 auto;min-width:0;display:inline-block;line-height:0;align-self:flex-start;cursor:crosshair;touch-action:none;}
+    .imgtool-stage img{max-width:100%;max-height:74vh;user-select:none;border-radius:8px;}
+    .imgtool-sel{position:absolute;border:2px solid var(--accent,#6366f1);background:rgba(99,102,241,.2);pointer-events:none;}
+    .imgtool-gallery{flex:0 0 210px;display:flex;flex-direction:column;gap:6px;max-height:74vh;}
+    .imgtool-list{display:flex;flex-direction:column;gap:8px;overflow:auto;}
+    .imgtool-thumb{border:1px solid rgba(128,128,128,.25);border-radius:8px;overflow:hidden;}
+    .imgtool-thumb img{width:100%;display:block;background:#000;}
+    .imgtool-thumb .cap{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:4px 6px;font-size:12px;}
+    .imgtool-thumb .del{cursor:pointer;color:var(--danger,#ff453a);}
+    .imgtool-thumb .cpy{cursor:pointer;}
+    /* Gallery hàng ngang */
+    .imgtool-gallery-h{flex:1;min-width:230px;display:flex;flex-direction:column;max-height:74vh;}
+    .imgtool-gh-head{font-size:12px;color:var(--muted,#8e8e93);margin-bottom:6px;}
+    .imgtool-gh-head code{font-family:ui-monospace,Menlo,monospace;}
+    .imgtool-list-h{display:flex;flex-direction:row;flex-wrap:wrap;align-content:flex-start;gap:8px;overflow-y:auto;padding-bottom:4px;}
+    .imgtool-list-h .imgtool-thumb{flex:0 0 120px;width:120px;}
+    .imgtool-list-h .imgtool-thumb img{width:100%;height:88px;object-fit:contain;display:block;background:#000;}
+    @media (max-width:700px){.imgtool-body{flex-direction:column;}.imgtool-gallery-h{max-height:40vh;}}
+
+    /* ===== Lớp phủ chặn license ===== */
+    .lic-gate{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;
+      background:rgba(10,0,0,.86);backdrop-filter:blur(3px);overflow:hidden;}
+    .lic-gate[hidden]{display:none;}
+    /* 2 dây xích đỏ chắn ngang (hazard stripe), nghiêng nhẹ */
+    .lic-chain{position:absolute;left:-10%;width:120%;padding:10px 0;white-space:nowrap;overflow:hidden;
+      font-size:22px;font-weight:800;letter-spacing:2px;color:#fff;text-shadow:0 1px 2px #000;text-align:center;
+      background:repeating-linear-gradient(45deg,#c1121f 0 22px,#1a1a1a 22px 44px);
+      border-top:3px solid #ff3b30;border-bottom:3px solid #ff3b30;box-shadow:0 6px 24px rgba(0,0,0,.6);}
+    .lic-chain-a{top:26%;transform:rotate(-7deg);}
+    .lic-chain-b{top:62%;transform:rotate(6deg);}
+    .lic-panel{position:relative;z-index:2;background:#1c1c1e;color:#fff;border:2px solid #ff3b30;
+      border-radius:16px;padding:24px 22px;width:min(92vw,440px);text-align:center;
+      box-shadow:0 20px 60px rgba(0,0,0,.7);}
+    .lic-icon{font-size:44px;line-height:1;margin-bottom:6px;}
+    .lic-panel h2{margin:6px 0 4px;font-size:20px;color:#ff453a;}
+    .lic-sub{margin:0 0 14px;font-size:13px;color:#c7c7cc;}
+    .lic-mid{background:#0e0e10;border:1px solid #333;border-radius:10px;padding:10px;margin-bottom:12px;
+      display:flex;flex-direction:column;gap:6px;align-items:center;}
+    .lic-mid-cap{font-size:11px;color:#8e8e93;}
+    .lic-mid code{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:#0af;word-break:break-all;}
+    .lic-form{display:flex;gap:8px;}
+    .lic-form input{flex:1;padding:10px;border-radius:9px;border:1px solid #444;background:#0e0e10;color:#fff;
+      font-family:ui-monospace,Menlo,monospace;font-size:14px;text-transform:uppercase;}
+    .lic-msg{min-height:18px;margin-top:10px;font-size:13px;}
+    .lic-msg.ok{color:#30d158;} .lic-msg.bad{color:#ff453a;}
+    .lic-foot{margin-top:12px;font-size:11px;color:#6d6d72;}
+    .lic-panel .mini{padding:9px 14px;border-radius:9px;border:1px solid #444;background:#2c2c2e;color:#fff;cursor:pointer;}
+    .lic-panel .mini.primary{background:#ff3b30;border-color:#ff3b30;font-weight:700;}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <img class="logo" src="logo.png" alt="iOS Control">
+      <strong>iOSAuto</strong>
+      <span class="dot" id="statusDot"></span>
+      <span class="sub" id="deviceLine">đang kết nối…</span>
+    </div>
+    <div class="brand-right">
+      <span id="appLine" class="sub"></span>
+    </div>
+  </header>
+
+  <main>
+    <!-- CỘT TRÁI: view iPhone + điều khiển -->
+    <section class="stage">
+      <div class="phone">
+        <div class="phone-top">
+          <button id="btnView" class="phone-btn on" title="Bật/tắt xem màn hình">Tắt View</button>
+          <button id="btnRefresh" class="phone-btn icon" title="Nối lại View">↻</button>
+          <button id="btnKb" class="phone-btn icon" title="Bàn phím: tap ô nhập rồi gõ/Ctrl+V dán vào thiết bị">⌨</button>
+          <div class="helper-wrap">
+            <button id="btnHelper" class="phone-btn" title="Tiện ích helper">Helper</button>
+            <div id="helperMenu" class="helper-menu" hidden>
+              <button class="helper-item" id="miDocs">📖 Hàm Lua &amp; ví dụ</button>
+              <button class="helper-item" id="miApps">📱 App đã cài</button>
+              <button class="helper-item" id="miShot">📸 Chụp & cắt ảnh</button>
+              <label class="helper-select-row" title="Ngon ngu dung cho Helper OCR man">
+                <span>OCR lang</span>
+                <select id="ocrLangSelect">
+                  <option value="en-US,vi-VN">English + Vietnamese</option>
+                  <option value="ja,en-US">Japanese + English</option>
+                  <option value="ja">Japanese</option>
+                  <option value="zh-Hans,en-US">Chinese + English</option>
+                  <option value="ko,en-US">Korean + English</option>
+                  <option value="en-US">English</option>
+                  <option value="vi-VN">Vietnamese</option>
+                </select>
+              </label>
+              <button class="helper-item" id="miOcr">🔤 OCR màn</button>
+              <button class="helper-item" id="miDump">🧬 Dump XML</button>
+            </div>
+          </div>
+        </div>
+        <div class="phone-screen" id="screen">
+          <img id="shot" alt="màn hình" draggable="false">
+          <div class="noimg" id="noimg"><span>Bấm <b>View Màn</b> ở trên<br>để xem màn hình iPhone</span></div>
+          <div class="crosshair" id="crosshair" hidden></div>
+          <div class="swipe-line" id="swipeLine" hidden></div>
+        </div>
+        <button class="phone-home" id="phoneHome" title="Về màn hình chính"></button>
+      </div>
+      <!-- Bắt phím từ web UI: textarea ẩn, focus khi tap màn iPhone → gõ chữ/IME/paste (Ctrl+V)
+           chuyển sang ô đang focus trên thiết bị. Off-screen nhưng vẫn focus được. -->
+      <textarea id="kbCapture" autocomplete="off" autocapitalize="none" autocorrect="off"
+                spellcheck="false" aria-hidden="true" tabindex="-1"
+                style="position:absolute;left:-9999px;top:0;width:1px;height:1px;opacity:0;border:0;padding:0;"></textarea>
+      <div class="stage-bar">
+        <span class="coords" id="coords">x: –, y: –</span>
+        <span class="hint">Bấm <b>tap</b> · Kéo <b>swipe</b> · Tap ô nhập rồi <b>gõ/Ctrl+V</b></span>
+      </div>
+    </section>
+
+    <!-- CỘT PHẢI: IDE = [helper app] | danh sách file | editor + log -->
+    <section class="ide">
+      <!-- Bảng tra HÀM LUA: cột đọc doc + bấm hàm ra ví dụ chạy thử. Mở từ Helper › Hàm Lua. -->
+      <div id="docsPanel" class="docs-panel" hidden>
+        <div class="docs-head">
+          <div class="dp-row">
+            <strong>📖 Hàm Lua <span id="docsCount" class="muted"></span></strong>
+            <button id="docsWide" class="mini" title="Mở rộng / thu gọn">⤢</button>
+            <button id="docsClose" class="mini" title="Đóng">✕</button>
+          </div>
+          <input id="docsSearch" placeholder="Tìm hàm… (tap, vuốt, ảnh, chờ…)" spellcheck="false">
+        </div>
+        <div id="docsList" class="docs-list"></div>
+      </div>
+
+      <!-- Cột helper (app đã cài): giữa view iPhone và cột script; mở từ nút Helper -->
+      <div id="helperPanel" class="helper-panel" hidden>
+        <div class="helper-panel-head">
+          <div class="hp-row">
+            <strong id="helperTitle">📱 App đã cài <span id="appsCount" class="muted"></span></strong>
+            <button id="helperWide" class="mini" title="Mở rộng / thu gọn helper">⤢</button>
+            <button id="helperClose" class="mini" title="Đóng">✕</button>
+          </div>
+          <input id="appsSearch" placeholder="Tìm app…" spellcheck="false">
+        </div>
+        <div id="appsList" class="apps-list"></div>
+      </div>
+
+      <aside class="files">
+        <div class="files-head">
+          <strong>Script <span id="fileCount" class="muted"></span></strong>
+          <span style="display:flex; gap:6px;">
+            <button id="btnImport" class="mini" title="Nhập file từ máy tính: .lua/.luax/.txt/.json → thư mục script; .png/.jpg → thư mục ảnh">⬆ Nhập</button>
+            <button id="btnNew" class="mini" title="File mới">＋ Mới</button>
+          </span>
+        </div>
+        <!-- input file ẩn cho nút Nhập (chọn nhiều file) -->
+        <input id="importFile" type="file" multiple hidden
+               accept=".lua,.luax,.txt,.json,.csv,.md,.ini,.conf,.png,.jpg,.jpeg,.gif,.bmp,.webp,image/*,text/*">
+        <div id="fileList" class="file-list"></div>
+      </aside>
+
+      <div class="editor-pane">
+        <div class="editor-bar">
+          <button id="btnToggleFiles" class="mini" title="Thu hẹp/mở rộng danh sách script">◀ Script</button>
+          <button id="btnDocs" class="mini" title="Bảng tra hàm Lua + ví dụ chạy thử">📖 Hàm</button>
+          <input id="scriptName" class="script-name" placeholder="tên_file.lua" spellcheck="false">
+          <button id="btnSave" class="mini primary" title="Lưu (Ctrl+S)">Lưu</button>
+          <button id="btnEncrypt" class="mini" title="Mã hoá + ký script → lưu thành .luax (bảo vệ mã nguồn, chỉ app này chạy được)">🔒 Mã hoá</button>
+          <button id="btnDownload" class="mini" title="Tải file script đang mở về máy tính">⬇ Tải</button>
+          <button id="btnDelete" class="mini danger" title="Xoá file">Xoá</button>
+          <button id="btnRun" class="mini run" title="Chạy script">▶ Chạy</button>
+          <span id="saveState" class="muted"></span>
+        </div>
+
+        <textarea id="scriptBox" spellcheck="false" placeholder='-- Viết script Lua. Bấm “📖 Hàm” để xem toàn bộ hàm + ví dụ chạy thử.
+-- Chèn nhanh: mở bảng Hàm Lua → bấm một hàm → “Chèn vào editor” hoặc “Chạy thử”.
+
+launch("com.apple.Preferences")
+sleep(1.5)
+swipe(300, 500, 60, 500)
+print("xong")'></textarea>
+
+        <div class="log-resizer" id="logResizer" title="Kéo lên/xuống để chỉnh chiều cao log"></div>
+        <div class="log-pane">
+          <div class="log-head">
+            <span id="logTitle">▶ Log chạy</span>
+            <span class="log-actions">
+              <button id="btnClear" class="mini" title="Xoá log">Xoá</button>
+            </span>
+          </div>
+          <pre id="scriptOut" class="output"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Công cụ Chụp & cắt ảnh (mở từ Helper) -->
+  <div id="imgTool" class="imgtool" hidden>
+    <div class="imgtool-box">
+      <div class="imgtool-head">
+        <strong>📸 Chụp &amp; cắt ảnh</strong>
+        <button id="imgClose" class="mini" title="Đóng">✕</button>
+      </div>
+      <div class="imgtool-bar">
+        <button id="imgRecap" class="mini">↻ Chụp lại</button>
+        <input id="imgName" class="script-name" placeholder="ten_anh.jpg" spellcheck="false">
+        <button id="imgSave" class="mini primary" disabled>💾 Lưu vùng cắt</button>
+        <button id="imgImport" class="mini" title="Nhập ảnh từ máy tính vào thư mục images (.png/.jpg/…)">⬆ Nhập ảnh</button>
+        <input id="imgImportFile" type="file" accept="image/*,.png,.jpg,.jpeg,.gif,.bmp,.webp" multiple hidden>
+        <span id="imgHint" class="muted">Kéo chuột trên ảnh để chọn vùng cắt</span>
+      </div>
+      <div class="imgtool-body">
+        <div id="imgStage" class="imgtool-stage">
+          <img id="imgShot" alt="ảnh chụp" draggable="false">
+          <div id="imgSel" class="imgtool-sel" hidden></div>
+        </div>
+        <!-- Ảnh đã lưu: BÊN PHẢI ảnh chụp, thumbnail xếp HÀNG NGANG (tự xuống dòng) -->
+        <div class="imgtool-gallery-h">
+          <div class="imgtool-gh-head">Ảnh đã lưu <span id="imgCount" class="muted"></span> · bấm 📋 để copy tên dùng trong <code>tapImage("…")</code></div>
+          <div id="imgList" class="imgtool-list-h"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LỚP PHỦ CHẶN CỨNG khi thiết bị CHƯA KÍCH HOẠT bản quyền -->
+  <div id="licenseGate" class="lic-gate" hidden>
+    <div class="lic-chain lic-chain-a">⛓ 🔒 CHƯA KÍCH HOẠT 🔒 ⛓ CHƯA KÍCH HOẠT ⛓ 🔒 CHƯA KÍCH HOẠT 🔒 ⛓</div>
+    <div class="lic-chain lic-chain-b">⛓ 🔒 KHOÁ THIẾT BỊ 🔒 ⛓ KHOÁ THIẾT BỊ ⛓ 🔒 KHOÁ THIẾT BỊ 🔒 ⛓</div>
+    <div class="lic-panel" role="alertdialog" aria-modal="true">
+      <div class="lic-icon">🔒</div>
+      <h2>Thiết bị chưa kích hoạt bản quyền</h2>
+      <p class="lic-sub">Mọi thao tác và xem màn hình đã bị khoá. Nhập license key để kích hoạt thiết bị này.</p>
+      <div class="lic-mid">
+        <span class="lic-mid-cap">Machine ID (serial) — đăng ký giá trị này:</span>
+        <code id="licMachine">—</code>
+        <button id="licCopy" class="mini">Sao chép</button>
+      </div>
+      <div class="lic-form">
+        <input id="licKey" placeholder="IOSA-XXXX-XXXX-XXXX" spellcheck="false" autocapitalize="characters">
+        <button id="licActivate" class="mini primary">Kích hoạt</button>
+      </div>
+      <div id="licMsg" class="lic-msg"></div>
+      <div class="lic-foot">Máy chủ: <span id="licServer">—</span></div>
+      <div class="lic-foot" id="licUsbFoot" hidden>USB Local: <span id="licUsb">—</span></div>
+    </div>
+  </div>
+
+  <script src="app.js?v=20260730-imgtool"></script>
+  <script src="docs.js?v=20260730-imgtool"></script>
+  <script src="editor.js?v=20260730-imgtool"></script>
+</body>
+</html>

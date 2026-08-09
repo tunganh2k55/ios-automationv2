@@ -1,0 +1,2 @@
+apikey=oi3gmELG6EmceMpxLBWPqLPt1Q7QThaI
+use4g=0

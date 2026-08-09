@@ -1,0 +1,4 @@
+#!/bin/sh
+# Dừng daemon trước khi gỡ.
+/var/jb/bin/launchctl bootout system/com.iosauto.daemon 2>/dev/null
+exit 0

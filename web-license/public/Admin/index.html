@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOSAuto — Quản trị</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav admin">
+    <div class="inner">
+      <a class="brand" href="/281admin"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> Quản trị <span class="kbd">281admin</span></a>
+      <div class="navlinks">
+        <a href="/281admin" class="on">Tổng quan</a>
+        <a href="/281admin/tools">Tools</a>
+        <a href="/281admin/licenses">Licenses</a>
+        <a href="/281admin/user">Users</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost" id="logout">Đăng xuất</button>
+    </div>
+  </nav>
+
+  <!-- Tổng quan (chỉ hiển thị khi đã đăng nhập & là admin — guard lo việc chặn) -->
+  <div class="wrap" id="overview">
+    <h1>Tổng quan</h1>
+    <div class="sub">Bảng điều khiển quản trị iOSAuto License.</div>
+    <div class="tiles">
+      <div class="tile"><div class="n" id="cTools">—</div><div class="l">Tool</div></div>
+      <div class="tile"><div class="n" id="cLicenses">—</div><div class="l">License</div></div>
+      <div class="tile"><div class="n" id="cUsers">—</div><div class="l">User</div></div>
+    </div>
+    <div class="card">
+      <h2>Lối tắt</h2>
+      <p><a href="/281admin/tools">Quản lý Tools</a> — tạo/ẩn tool, đặt gói giá.</p>
+      <p><a href="/281admin/licenses">Quản lý Licenses</a> — cấp key, kích hoạt theo serial, thu hồi/gia hạn.</p>
+      <p><a href="/281admin/user">Quản lý Users</a> — danh sách người dùng.</p>
+    </div>
+  </div>
+
+  <script src="/281admin/index.js"></script>
+</body>
+</html>

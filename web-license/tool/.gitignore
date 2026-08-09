@@ -1,0 +1,4 @@
+# Binary phát hành (80MB+) KHÔNG commit vào git — tránh phình repo.
+# latest.json/index.json (nhỏ) VẪN commit; file .exe upload lên server riêng (scp/panel),
+# hoặc muốn commit thì force-add: git add -f tool/<slug>/<file>.exe
+*.exe

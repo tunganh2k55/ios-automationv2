@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PokemonTool — Tải về</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+           background: #0a0e1a; color: #e6ebf5; display: grid; place-items: center; min-height: 100vh; }
+    .card { width: min(560px, 92vw); background: #121829; border: 1px solid #223; border-radius: 18px;
+            padding: 32px; box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+    h1 { margin: 0 0 4px; font-size: 26px; }
+    .ver { color: #7fd1ff; font-weight: 700; }
+    .notes { color: #9fb0c8; margin: 12px 0 20px; min-height: 20px; line-height: 1.5; }
+    a.dl { display: inline-flex; align-items: center; gap: 10px; text-decoration: none;
+           background: linear-gradient(135deg,#3b82f6,#2563eb); color: #fff; font-weight: 700;
+           padding: 14px 22px; border-radius: 12px; font-size: 16px; }
+    a.dl.disabled { pointer-events: none; opacity: .5; }
+    .meta { margin-top: 16px; font-size: 13px; color: #6b7a92; }
+    .sha { font-family: ui-monospace, Consolas, monospace; word-break: break-all; color: #58708f; }
+    .req { margin-top: 22px; padding-top: 18px; border-top: 1px solid #223; font-size: 13px; color: #8aa; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>PokémonTool <span class="ver" id="ver">…</span></h1>
+    <div class="notes" id="notes">Quản lý & điều khiển reg Pokémon trên nhiều iPhone (WiFi/USB).</div>
+    <a class="dl disabled" id="dl" download>⬇ Tải bản Windows (portable) · <span id="size">—</span></a>
+    <div class="meta">SHA-256: <span class="sha" id="sha">—</span></div>
+    <div class="req">
+      <b>Chạy USB?</b> Cần cài sẵn <b>3uTools</b> hoặc <b>iTunes / Apple Devices</b> (để có driver Apple Mobile Device).
+      Không cài gì thì dùng chế độ <b>WiFi</b> (máy tính & iPhone cùng mạng).
+    </div>
+  </main>
+  <script src="download.js"></script>
+</body>
+</html>

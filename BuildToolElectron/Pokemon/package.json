@@ -1,0 +1,51 @@
+{
+  "name": "pokemontool",
+  "version": "1.0.9",
+  "description": "PokémonTool — quản lý & điều khiển reg Pokémon trên nhiều iPhone (WiFi/USB)",
+  "author": "iosautos.com",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "icon": "python build/gen_icon.py",
+    "dist": "electron-builder --win --x64",
+    "pack": "electron-builder --dir"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.iosautos.pokemontool",
+    "productName": "PokemonTool",
+    "artifactName": "PokemonTool-${version}-${arch}.${ext}",
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*",
+      "scripts/**/*",
+      "build/icon.*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "PokemonTool"
+    },
+    "portable": {
+      "artifactName": "PokemonTool-${version}-portable.exe"
+    }
+  }
+}

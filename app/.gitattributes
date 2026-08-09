@@ -1,0 +1,19 @@
+# Scripts and build files consumed by the macOS CI runner MUST be LF,
+# otherwise bash/make on macOS fail with "bad interpreter" / syntax errors.
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.mk    text eol=lf
+Makefile text eol=lf
+control text eol=lf
+postinst text eol=lf
+prerm text eol=lf
+*.plist text eol=lf
+*.c     text eol=lf
+*.h     text eol=lf
+*.m     text eol=lf
+*.py    text eol=lf
+*.lua   text eol=lf
+*.js    text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf

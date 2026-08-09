@@ -1,0 +1,9 @@
+Package: com.iosauto.daemon
+Name: iOSAuto Daemon
+Version: 0.5.9
+Architecture: iphoneos-arm64
+Description: Self-hosted iPhone automation daemon (HTTP + open/close app). iOS 15-16 rootless.
+Maintainer: iOSAuto Team
+Author: iOSAuto Team
+Section: System
+Depends: firmware (>= 15.0)

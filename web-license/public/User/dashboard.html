@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOSAuto License — Cửa hàng</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="inner">
+      <a class="brand" href="/dashboard"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> iOSAuto License</a>
+      <div class="navlinks">
+        <a href="/dashboard" class="on">Cửa hàng</a>
+        <a href="/orders">Đơn hàng</a>
+        <a href="/license">License của tôi</a>
+        <a href="/setting">Cài đặt</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost" id="logout">Đăng xuất</button>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <h1>Cửa hàng</h1>
+    <div class="sub">Chọn license → chọn gói → thanh toán. Đơn chờ có hiệu lực <b>15 phút</b>, key tự cấp khi nhận được tiền.</div>
+
+    <!-- Bước 1: chọn license (tool) -->
+    <section class="step">
+      <div class="step-head"><span class="step-no">1</span><h2>Chọn license</h2></div>
+      <div class="tool-grid" id="tools"></div>
+      <div class="msg" id="storeMsg"></div>
+    </section>
+
+    <!-- Bước 2: chọn gói & thanh toán -->
+    <section class="step is-locked" id="planStep">
+      <div class="step-head"><span class="step-no">2</span><h2>Chọn gói &amp; thanh toán</h2></div>
+      <div class="plan-panel">
+        <div class="sub" id="planFor">Hãy chọn một license ở bước 1.</div>
+        <div class="plans" id="plans"></div>
+        <label>Serial / Machine ID <span class="hint">(tuỳ chọn · gắn cố định 1 máy, không đổi được sau khi kích hoạt)</span></label>
+        <input id="mid" type="text" placeholder="VD: AB12CD34" autocapitalize="characters" autocomplete="off">
+        <label>Chú thích <span class="hint">(tuỳ chọn · ghi lại ghi chú của bạn, sẽ hiển thị ở trang License của tôi)</span></label>
+        <textarea id="note" rows="2" maxlength="500" placeholder="VD: mua cho máy công ty, liên hệ Zalo 09xx…" autocomplete="off"></textarea>
+        <button class="primary" id="payBtn" disabled>Thanh toán</button>
+        <div class="msg bad" id="buyErr"></div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Panel thanh toán trượt ra từ góc phải, có đồng hồ đếm ngược -->
+  <div class="drawer-back" id="drawerBack" hidden></div>
+  <aside class="pay-drawer" id="payDrawer" hidden aria-label="Thanh toán đơn hàng">
+    <div class="pay-head">
+      <div>
+        <div class="pay-eyebrow">Đơn hàng</div>
+        <div class="pay-code mono" id="pdCode">—</div>
+      </div>
+      <button class="pay-close" id="pdClose" aria-label="Đóng">&times;</button>
+    </div>
+
+    <!-- Chờ thanh toán -->
+    <div id="pdPending">
+      <div class="pay-timer-wrap">
+        <div class="pay-timer" id="pdTimer">15:00</div>
+        <div class="pay-timer-l">Còn lại để thanh toán</div>
+        <div class="pay-bar"><div class="pay-bar-fill" id="pdBar"></div></div>
+      </div>
+      <img class="pay-qr" id="pdQr" alt="QR chuyển khoản" width="220" height="220">
+      <div class="paykv" id="pdKv"></div>
+      <div class="msg pay-status" id="pdStatus">⏳ Đang chờ thanh toán…</div>
+    </div>
+
+    <!-- Đã thanh toán / hết hạn -->
+    <div id="pdResult" hidden></div>
+  </aside>
+
+  <script src="/dashboard.js"></script>
+</body>
+</html>

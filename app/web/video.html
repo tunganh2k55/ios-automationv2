@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>IOScontrol — Live (WebRTC/H.264)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #0b0d10; color: #e6e8ea; font: 14px -apple-system, Segoe UI, Roboto, sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; padding: 8px 12px; background: #14171c; border-bottom: 1px solid #232830; }
+  header b { font-size: 15px; }
+  .stat { color: #8b93a1; font-variant-numeric: tabular-nums; }
+  .stat span { color: #4caf82; }
+  button { background: #2a2f3a; color: #e6e8ea; border: 1px solid #3a4150; border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { background: #333a47; }
+  #wrap { display: flex; justify-content: center; align-items: center; padding: 12px; }
+  #screen { background: #000; border-radius: 14px; max-width: 100%; max-height: calc(100vh - 90px); touch-action: none; cursor: crosshair; box-shadow: 0 8px 40px rgba(0,0,0,.5); }
+  #msg { position: fixed; top: 50%; left: 0; right: 0; text-align: center; color: #8b93a1; pointer-events: none; }
+</style>
+</head>
+<body>
+<header>
+  <b>IOScontrol</b>
+  <button id="btnFull">Toàn màn hình</button>
+  <span class="stat">FPS: <span id="fps">0</span></span>
+  <span class="stat">Frames: <span id="frames">0</span></span>
+  <span class="stat">Res: <span id="res">–</span></span>
+  <span class="stat">KB/s: <span id="kbps">0</span></span>
+  <span class="stat" id="state">đang kết nối…</span>
+</header>
+<div id="wrap"><canvas id="screen" width="375" height="667"></canvas></div>
+<div id="msg">Chờ khung hình đầu tiên…</div>
+
+<script>
+const cv = document.getElementById('screen');
+const ctx = cv.getContext('2d');
+const $ = id => document.getElementById(id);
+let decoder = null, configured = false, frameCount = 0, bytes = 0, lastT = performance.now(), fpsCount = 0;
+let devW = 375, devH = 667;   // kích thước POINT thiết bị (cho toạ độ tap)
+
+// Lấy kích thước màn thật để chuẩn hoá toạ độ tap.
+fetch('/api/status').then(r => r.json()).then(d => {
+  if (d && d.screen) { devW = d.screen.w; devH = d.screen.h; }
+}).catch(()=>{});
+
+function hex2(n){ return n.toString(16).padStart(2,'0'); }
+// Tìm SPS (NAL type 7) trong access unit annexb → dựng codec string avc1.PPCCLL.
+function codecFromAU(u8){
+  for (let i = 0; i + 4 < u8.length; i++){
+    if (u8[i]===0 && u8[i+1]===0 && ((u8[i+2]===1) || (u8[i+2]===0 && u8[i+3]===1))){
+      const p = u8[i+2]===1 ? i+3 : i+4;
+      if ((u8[p] & 0x1f) === 7 && p+3 < u8.length)
+        return 'avc1.' + hex2(u8[p+1]) + hex2(u8[p+2]) + hex2(u8[p+3]);
+    }
+  }
+  return 'avc1.42e01f';
+}
+
+function setupDecoder(codec){
+  decoder = new VideoDecoder({
+    output: frame => {
+      if (cv.width !== frame.displayWidth || cv.height !== frame.displayHeight){
+        cv.width = frame.displayWidth; cv.height = frame.displayHeight;
+        $('res').textContent = frame.displayWidth + '×' + frame.displayHeight;
+      }
+      ctx.drawImage(frame, 0, 0, cv.width, cv.height);
+      frame.close();
+      frameCount++; fpsCount++;
+      $('frames').textContent = frameCount;
+      $('msg').style.display = 'none';
+    },
+    error: e => { $('state').textContent = 'decoder lỗi: ' + e.message; }
+  });
+  decoder.configure({ codec, optimizeForLatency: true });
+  configured = true;
+  $('state').textContent = 'đang phát (' + codec + ')';
+}
+
+let tsCounter = 0;
+function connect(){
+  const ws = new WebSocket((location.protocol==='https:'?'wss://':'ws://') + location.host + '/ws/video');
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { $('state').textContent = 'đã kết nối, chờ keyframe…'; };
+  ws.onclose = () => { $('state').textContent = 'mất kết nối, thử lại…'; configured = false; if (decoder){try{decoder.close()}catch(e){}} decoder=null; setTimeout(connect, 1000); };
+  ws.onerror = () => { $('state').textContent = 'lỗi WebSocket'; };
+  ws.onmessage = ev => {
+    const buf = new Uint8Array(ev.data);
+    bytes += buf.length;
+    const key = buf[0] & 1;
+    const au = buf.subarray(1);       // bỏ byte flags → còn annexb
+    if (!configured){
+      if (!key) return;               // chờ keyframe để bắt đầu
+      try { setupDecoder(codecFromAU(au)); } catch(e){ $('state').textContent='configure lỗi: '+e.message; return; }
+    }
+    if (decoder && decoder.state === 'configured'){
+      try {
+        decoder.decode(new EncodedVideoChunk({ type: key ? 'key':'delta', timestamp: tsCounter++, data: au }));
+      } catch(e){ /* bỏ frame lỗi */ }
+    }
+  };
+}
+
+// Thống kê FPS + KB/s mỗi giây.
+setInterval(() => {
+  const now = performance.now(), dt = (now - lastT)/1000;
+  $('fps').textContent = Math.round(fpsCount/dt);
+  $('kbps').textContent = Math.round(bytes/1024/dt);
+  fpsCount = 0; bytes = 0; lastT = now;
+}, 1000);
+
+// ---- Input: chuẩn hoá toạ độ theo vùng canvas → gửi /api/tap, /api/swipe ----
+function norm(ev){
+  const r = cv.getBoundingClientRect();
+  const x = Math.min(1, Math.max(0, (ev.clientX - r.left)/r.width));
+  const y = Math.min(1, Math.max(0, (ev.clientY - r.top)/r.height));
+  return { x: Math.round(x*devW), y: Math.round(y*devH) };
+}
+let down = null;
+cv.addEventListener('pointerdown', ev => { down = norm(ev); cv.setPointerCapture(ev.pointerId); });
+cv.addEventListener('pointerup', ev => {
+  if (!down) return;
+  const up = norm(ev);
+  const dist = Math.hypot(up.x-down.x, up.y-down.y);
+  if (dist < 10) fetch('/api/tap', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({x:up.x, y:up.y})});
+  else fetch('/api/swipe', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({x1:down.x, y1:down.y, x2:up.x, y2:up.y, duration:0.25})});
+  down = null;
+});
+window.addEventListener('keydown', ev => {
+  if (ev.key === 'Escape') return;
+  if (ev.key.length === 1 || ev.key === ' ') fetch('/api/type', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text: ev.key})});
+});
+$('btnFull').onclick = () => { if (cv.requestFullscreen) cv.requestFullscreen(); };
+
+if (!('VideoDecoder' in window)) {
+  if (!window.isSecureContext) {
+    $('msg').innerHTML = '<b>WebCodecs bị chặn vì trang KHÔNG phải secure context (HTTP qua IP).</b><br><br>' +
+      'Mở <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>,<br>' +
+      'nhập <code>' + location.origin + '</code>, chọn <b>Enabled</b>, bấm <b>Relaunch</b>, rồi mở lại trang này.';
+    $('state').textContent = 'cần bật flag secure-origin';
+  } else {
+    $('msg').textContent = 'Trình duyệt không hỗ trợ WebCodecs (dùng Chrome/Edge mới).';
+  }
+} else connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# ============================================================================
+# config-aeon-kids-iosauto.txt — cấu hình cho chyusen-aeon-kid.lua
+# Đặt file này (đúng TÊN này) trong thư mục scripts của iOSAuto trên máy:
+#   /var/jb/usr/local/iosauto/scripts/config-aeon-kids-iosauto.txt
+# Cú pháp: key = value  (một dòng một khoá; dòng trống / bắt đầu bằng # bị bỏ).
+# ============================================================================
+
+# Bundle app AEON Kids Republic cần quét toàn bộ crane container.
+bundle = jp.aeonretail.aeon-kidsrepublic
+
+# API key (dùng chung hệ imapicloud — để trống nếu main không gọi API).
+apikey = oi3gmELG6EmceMpxLBWPqLPt1Q7QThaI
+
+# 1 = đổi IP 4G (bật/tắt Airplane) TRƯỚC mỗi container; 0 = không đụng sóng.
+use4g = 0
+
+# Tên container ĐÃ check gần nhất — script TỰ GHI đè sau khi check xong mỗi container.
+# Container "Default" LUÔN bị bỏ qua; đánh số bắt đầu từ container số 1. Để trống = chưa check cái nào.
+last_check =
+
+# 1 = chạy lại sẽ TIẾP TỤC từ container NGAY SAU last_check (bỏ qua các cái đã check).
+#     Ví dụ list: Default, cbv, xyz → check cbv (#1) xong ghi last_check=cbv; chạy lại → bắt đầu xyz (#2).
+# 0 = luôn check lại TỪ ĐẦU (container số 1), không quan tâm last_check.
+continue_after_last_check = 1

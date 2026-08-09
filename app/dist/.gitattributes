@@ -1,0 +1,4 @@
+# Script cài + control PHẢI là LF (CRLF làm hỏng #!/bin/sh và dpkg control trên iOS).
+control  text eol=lf
+postinst text eol=lf
+prerm    text eol=lf

@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOSAuto License — Cài đặt</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="inner">
+      <a class="brand" href="/dashboard"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> iOSAuto License</a>
+      <div class="navlinks">
+        <a href="/dashboard">Cửa hàng</a>
+        <a href="/orders">Đơn hàng</a>
+        <a href="/license">License của tôi</a>
+        <a href="/setting" class="on">Cài đặt</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost" id="logout">Đăng xuất</button>
+    </div>
+  </nav>
+
+  <div class="wrap narrow">
+    <h1>Cài đặt tài khoản</h1>
+    <div class="sub">Thông tin & bảo mật tài khoản của bạn.</div>
+
+    <div class="card">
+      <h2>Thông tin</h2>
+      <div class="kv"><span class="k">Email</span><span class="v" id="acEmail">—</span></div>
+      <div class="kv"><span class="k">Vai trò</span><span class="v" id="acRole">—</span></div>
+      <div class="kv"><span class="k">Ngày tạo</span><span class="v" id="acCreated">—</span></div>
+      <label style="margin-top:16px">Tên hiển thị</label>
+      <input id="pName" type="text" placeholder="Tên của bạn">
+      <button class="primary" id="saveName">Lưu tên</button>
+      <div class="msg" id="nameMsg"></div>
+    </div>
+
+    <div class="card">
+      <h2>Đổi mật khẩu</h2>
+      <label>Mật khẩu hiện tại</label>
+      <input id="oldPass" type="password" autocomplete="current-password">
+      <label>Mật khẩu mới <span class="hint">(tối thiểu 6 ký tự)</span></label>
+      <input id="newPass" type="password" autocomplete="new-password">
+      <button class="primary" id="savePass">Đổi mật khẩu</button>
+      <div class="msg" id="passMsg"></div>
+    </div>
+  </div>
+
+  <script src="/setting.js"></script>
+</body>
+</html>

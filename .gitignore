@@ -1,0 +1,25 @@
+# Công cụ/local
+.claude/
+.DS_Store
+*.swp
+
+# Build artifacts (mỗi thư mục con còn có .gitignore riêng)
+*.deb
+*.tipa
+# NGOẠI LỆ: repo Sileo phục vụ tại iosautos.com/repo CẦN commit .deb
+!web-license/repo/debs/*.deb
+node_modules/
+*.log
+
+# Theos / Lua fetch bởi CI
+app/daemon/lua/
+app/**/.theos/
+app/**/packages/
+
+# Test tạm
+*.bin
+frame*.jpg
+mjpeg*.bin
+
+# Job scripts (bản nháp cục bộ — không đưa lên repo)
+Job/

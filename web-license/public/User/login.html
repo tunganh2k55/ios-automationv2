@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOSAuto License — Đăng nhập</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="inner">
+      <a class="brand" href="/"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> iOSAuto License</a>
+      <div class="spacer"></div>
+      <a class="navbtn" href="/">← Trang chủ</a>
+    </div>
+  </nav>
+
+  <div class="wrap narrow">
+    <div class="card">
+      <div class="tabs">
+        <button class="tab on" data-atab="login">Đăng nhập</button>
+        <button class="tab" data-atab="register">Tạo tài khoản</button>
+      </div>
+
+      <form id="loginForm" data-apane="login">
+        <label>Email</label>
+        <input id="lEmail" type="email" autocomplete="username" placeholder="ban@email.com">
+        <label>Mật khẩu</label>
+        <input id="lPass" type="password" autocomplete="current-password" placeholder="••••••••">
+        <button class="primary" type="submit">Đăng nhập</button>
+      </form>
+
+      <form id="registerForm" class="hidden" data-apane="register">
+        <label>Tên <span class="hint">(tuỳ chọn)</span></label>
+        <input id="rName" type="text" placeholder="Tên của bạn">
+        <label>Email</label>
+        <input id="rEmail" type="email" autocomplete="username" placeholder="ban@email.com">
+        <label>Mật khẩu <span class="hint">(tối thiểu 6 ký tự)</span></label>
+        <input id="rPass" type="password" autocomplete="new-password" placeholder="••••••••">
+        <button class="primary" type="submit">Tạo tài khoản</button>
+      </form>
+
+      <div class="msg bad" id="authErr"></div>
+    </div>
+  </div>
+
+  <script src="/auth.js"></script>
+</body>
+</html>

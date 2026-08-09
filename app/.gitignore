@@ -1,0 +1,23 @@
+# Lua source (fetched bởi CI, không commit)
+daemon/lua/
+
+# Theos build output
+daemon/.theos/
+app/.theos/
+daemon/packages/
+app/packages/
+*.deb
+*.tipa
+
+# macOS / editor cruft
+.DS_Store
+*.swp
+
+# Python
+control/__pycache__/
+*.pyc
+
+# file test tạm
+*.bin
+frame*.jpg
+mjpeg*.bin

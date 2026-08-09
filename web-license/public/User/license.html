@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOSAuto License — License của tôi</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="inner">
+      <a class="brand" href="/dashboard"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> iOSAuto License</a>
+      <div class="navlinks">
+        <a href="/dashboard">Cửa hàng</a>
+        <a href="/orders">Đơn hàng</a>
+        <a href="/license" class="on">License của tôi</a>
+        <a href="/setting">Cài đặt</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost" id="logout">Đăng xuất</button>
+    </div>
+  </nav>
+
+  <div class="wrap wide">
+    <h1>License của tôi</h1>
+    <div class="sub">Quản lý các key theo trạng thái: <b>chưa kích hoạt</b>, <b>đang hiệu lực</b>, <b>hết hạn</b>. Bấm <b>Kích hoạt</b> để gán serial / Machine ID, <b>QR</b> để xem/quét nội dung key.</div>
+
+    <div class="tiles" id="mineTiles"></div>
+
+    <div class="tabs" id="mineTabs">
+      <button class="tab on" data-f="all" type="button">Tất cả</button>
+      <button class="tab" data-f="pending" type="button">Chưa kích hoạt</button>
+      <button class="tab" data-f="valid" type="button">Đang hiệu lực</button>
+      <button class="tab" data-f="expired" type="button">Hết hạn</button>
+    </div>
+
+    <div class="card tablewrap lic">
+      <table>
+        <thead><tr><th>Tool</th><th>Key</th><th>Gói</th><th>Serial</th><th>Trạng thái</th><th>Hạn</th><th>Chú thích</th><th></th></tr></thead>
+        <tbody id="mineBody"></tbody>
+      </table>
+      <div class="msg" id="mineMsg"></div>
+    </div>
+  </div>
+
+  <script src="/license.js"></script>
+</body>
+</html>

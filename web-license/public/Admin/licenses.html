@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quản trị — Licenses</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav admin">
+    <div class="inner">
+      <a class="brand" href="/281admin"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> Quản trị <span class="kbd">281admin</span></a>
+      <div class="navlinks">
+        <a href="/281admin">Tổng quan</a>
+        <a href="/281admin/tools">Tools</a>
+        <a href="/281admin/licenses" class="on">Licenses</a>
+        <a href="/281admin/user">Users</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost" id="logout">Đăng xuất</button>
+    </div>
+  </nav>
+
+  <div class="wrap wide">
+    <div class="row2">
+      <div class="card">
+        <h2>Cấp key</h2>
+        <div class="row2">
+          <div><label>Tool</label><select id="iTool"></select></div>
+          <div><label>Gói</label><select id="iPlan"></select></div>
+        </div>
+        <label>Email user <span class="hint">(tuỳ chọn — gắn key cho tài khoản)</span></label>
+        <input id="iEmail" type="email" placeholder="user@email.com">
+        <div class="row2">
+          <div><label>Serial <span class="hint">(tuỳ chọn)</span></label><input id="iMid" type="text" placeholder="AB12CD34" autocapitalize="characters"></div>
+          <div><label>Ghi chú</label><input id="iNote" type="text" placeholder="Tên khách / đơn…"></div>
+        </div>
+        <button class="primary" id="iBtn">Cấp key</button>
+        <div class="msg" id="iMsg"></div>
+      </div>
+      <div class="card">
+        <h2>Kích hoạt theo serial</h2>
+        <div class="sub">Gán serial cho một key có sẵn (không giới hạn máy cũ).</div>
+        <label>License key</label>
+        <input id="aKey" type="text" placeholder="IOSA-XXXX-XXXX-XXXX">
+        <label>Serial / Machine ID</label>
+        <input id="aMid" type="text" placeholder="AB12CD34" autocapitalize="characters">
+        <button class="primary" id="aBtn">Kích hoạt</button>
+        <div class="msg" id="aMsg"></div>
+      </div>
+    </div>
+
+    <div class="card tablewrap lic">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">Danh sách license</h2>
+        <span class="pill" id="count"></span>
+        <div class="spacer" style="flex:1"></div>
+        <select id="fTool" style="width:auto"><option value="">— Tất cả tool —</option></select>
+      </div>
+      <table style="margin-top:12px"><thead><tr>
+        <th>Key</th><th>Tool</th><th>User</th><th>Serial</th><th>Gói</th><th>Trạng thái</th><th>Hạn</th><th>Ghi chú</th><th></th>
+      </tr></thead><tbody id="body"></tbody></table>
+    </div>
+  </div>
+
+  <script src="/281admin/licenses.js"></script>
+</body>
+</html>

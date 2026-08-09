@@ -1,0 +1,6 @@
+{
+  Filter = {
+    Bundles = ( "com.apple.Foundation" );
+    Flags = 1;
+  };
+}

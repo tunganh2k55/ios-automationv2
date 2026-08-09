@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quản trị — Tools</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav admin">
+    <div class="inner">
+      <a class="brand" href="/281admin"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> Quản trị <span class="kbd">281admin</span></a>
+      <div class="navlinks">
+        <a href="/281admin">Tổng quan</a>
+        <a href="/281admin/tools" class="on">Tools</a>
+        <a href="/281admin/licenses">Licenses</a>
+        <a href="/281admin/user">Users</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost" id="logout">Đăng xuất</button>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <div class="card">
+      <h2 id="formTitle">Tạo tool mới</h2>
+      <div class="row2">
+        <div><label>Tên tool</label><input id="tName" type="text" placeholder="VD: iOSAuto Touch"></div>
+        <div><label>Slug <span class="hint">(để trống = tự tạo)</span></label><input id="tSlug" type="text" placeholder="iosauto"></div>
+      </div>
+      <label>Mô tả</label>
+      <input id="tDesc" type="text" placeholder="Mô tả ngắn hiển thị ở cửa hàng">
+      <label>Gói &amp; giá <span class="hint">— JSON: [{id,label,days,price}], days=null = vĩnh viễn</span></label>
+      <textarea id="tPlans"></textarea>
+      <button class="primary" id="save">Lưu tool</button>
+      <button class="link" id="reset" style="margin-top:8px">Huỷ / tạo mới</button>
+      <div class="msg" id="msg"></div>
+    </div>
+
+    <div class="card tablewrap">
+      <h2>Danh sách tool</h2>
+      <table><thead><tr><th>Tên</th><th>Slug</th><th>Gói</th><th>Trạng thái</th><th></th></tr></thead>
+        <tbody id="body"></tbody></table>
+    </div>
+  </div>
+
+  <script src="/281admin/tools.js"></script>
+</body>
+</html>

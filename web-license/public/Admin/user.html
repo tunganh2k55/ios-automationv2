@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quản trị — Users</title>
+  <link rel="icon" href="/assets/logo.png">
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <nav class="nav admin">
+    <div class="inner">
+      <a class="brand" href="/281admin"><img class="logo" src="/assets/logo.png" alt="iOSAuto"> Quản trị <span class="kbd">281admin</span></a>
+      <div class="navlinks">
+        <a href="/281admin">Tổng quan</a>
+        <a href="/281admin/tools">Tools</a>
+        <a href="/281admin/licenses">Licenses</a>
+        <a href="/281admin/user" class="on">Users</a>
+      </div>
+      <div class="spacer"></div>
+      <span class="who" id="who"></span>
+      <button class="ghost" id="logout">Đăng xuất</button>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <div class="card tablewrap">
+      <h2>Người dùng <span class="pill" id="count"></span></h2>
+      <table><thead><tr>
+        <th>Email</th><th>Tên</th><th>Vai trò</th>
+        <th>Đã thanh toán</th><th>License</th><th>Ngày tạo</th>
+      </tr></thead>
+        <tbody id="body"></tbody></table>
+    </div>
+  </div>
+
+  <script src="/281admin/user.js"></script>
+</body>
+</html>

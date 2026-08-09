@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none';" />
+  <title>PokémonTool</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+
+  <!-- ===================== HEADER BANNER + TITLEBAR ===================== -->
+  <header class="banner">
+    <div class="banner-bg"></div>
+    <div class="banner-left">
+      <img class="ball-lg" src="assets/pokeball3d.png" alt="" />
+      <div class="brand-word">Pokémon<b>Tool</b></div>
+    </div>
+    <div class="banner-center">
+      <div class="banner-title">POKÉMON TOOL</div>
+      <div class="banner-sub">Công cụ hỗ trợ tự động hoá &amp; quản lý reg</div>
+    </div>
+    <div class="banner-right">
+      <div class="mode-toggle" id="modeToggle" title="Chế độ kết nối">
+        <button class="mode active" data-mode="wifi">📶 WiFi</button>
+        <button class="mode" data-mode="usb">🔌 USB</button>
+      </div>
+      <div class="profile-chip">
+        <span class="ava">⚡</span>
+        <div class="pc-txt"><b>Trainer</b><span id="serverPill"><i class="dot"></i> đang dò…</span></div>
+      </div>
+      <div class="winctl">
+        <button id="winMin" title="Thu nhỏ">&#x2013;</button>
+        <button id="winMax" title="Phóng to">&#x25A1;</button>
+        <button id="winClose" class="close" title="Đóng">&#x2715;</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside class="sidebar">
+    <nav class="nav">
+      <button class="nav-item active" data-view="home"><span class="ic">🏠</span> Trang chủ <img class="nav-ball" src="assets/pokeball3d.png" alt=""/></button>
+      <button class="nav-item" data-view="devices"><span class="ic">📱</span> Thiết bị</button>
+      <button class="nav-item" data-view="config"><span class="ic">⚙️</span> Cấu hình</button>
+      <button class="nav-item" data-view="logs"><span class="ic">📜</span> Nhật ký</button>
+    </nav>
+    <div class="sidebar-foot">
+      <img class="ball-deco" src="assets/pokeball3d.png" alt="" />
+      <div class="ver"><span id="appVer">v1.0.0</span><br/><small>© 2026 PokémonTool</small></div>
+    </div>
+  </aside>
+
+  <!-- ===================== MAIN ===================== -->
+  <main class="content">
+
+    <!-- ---------- Banner auto-update ---------- -->
+    <div class="update-bar" id="updateBar" hidden>
+      <span class="ub-ic">⬆️</span>
+      <div class="ub-body">
+        <div class="ub-title" id="ubTitle">Có bản cập nhật</div>
+        <div class="ub-sub" id="ubSub"></div>
+      </div>
+      <div class="ub-actions">
+        <button class="btn primary sm" id="ubBtn">Cập nhật ngay</button>
+        <button class="btn sm" id="ubLater">Để sau</button>
+      </div>
+    </div>
+
+    <!-- ---------- VIEW: TRANG CHỦ ---------- -->
+    <section class="view active" id="view-home">
+      <!-- stat cards -->
+      <div class="stats">
+        <div class="stat blue">
+          <div class="stat-ic">📱</div>
+          <div class="stat-body"><div class="stat-label">Thiết bị kết nối</div><div class="stat-num" id="stConnected">0</div><div class="stat-foot">Thiết bị</div></div>
+          <img class="stat-ball" src="assets/pokeball3d.png" alt="">
+        </div>
+        <div class="stat green">
+          <div class="stat-ic">✅</div>
+          <div class="stat-body"><div class="stat-label">Đã kích hoạt</div><div class="stat-num" id="stActive">0</div><div class="stat-foot">pokemontool</div></div>
+          <img class="stat-ball" src="assets/pokeball3d.png" alt="">
+        </div>
+        <div class="stat amber">
+          <div class="stat-ic">⚠️</div>
+          <div class="stat-body"><div class="stat-label">Chưa kích hoạt</div><div class="stat-num" id="stInactive">0</div><div class="stat-foot">Cần cấp license</div></div>
+          <img class="stat-ball" src="assets/pokeball3d.png" alt="">
+        </div>
+        <div class="stat purple">
+          <div class="stat-ic">⏱️</div>
+          <div class="stat-body"><div class="stat-label">Thời gian hoạt động</div><div class="stat-num mono" id="stUptime">00:00:00</div><div class="stat-foot">Online</div></div>
+          <img class="stat-ball" src="assets/pokeball3d.png" alt="">
+        </div>
+      </div>
+
+      <!-- 2 cột -->
+      <div class="cols">
+        <div class="card">
+          <div class="card-head"><span class="ch-title">📱 Thiết bị kết nối</span><button class="link" data-goto="devices">Xem tất cả</button></div>
+          <div class="dev-list" id="homeDevList"></div>
+          <div class="card-foot"><button class="btn primary" id="homeScan">↻ Quét thiết bị</button></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span class="ch-title">🔔 Hoạt động gần đây</span><button class="link" data-goto="logs">Xem tất cả</button></div>
+          <div class="feed" id="homeFeed"></div>
+        </div>
+      </div>
+
+      <!-- tác vụ nhanh -->
+      <div class="card quick">
+        <div class="card-head"><span class="ch-title">⚡ Tác vụ nhanh</span></div>
+        <div class="quick-grid">
+          <button class="qa" data-qa="wifi"><span class="qa-ic">📶</span>Quét WiFi</button>
+          <button class="qa" data-qa="usb"><span class="qa-ic">🔌</span>Quét USB</button>
+          <button class="qa" data-qa="runall"><span class="qa-ic">▶️</span>Chạy tất cả</button>
+          <button class="qa" data-qa="view"><span class="qa-ic">🖥️</span>Mở view máy 1</button>
+          <button class="qa" data-qa="license"><span class="qa-ic">🔑</span>Kiểm license</button>
+          <button class="qa" data-qa="stopall"><span class="qa-ic">⏹️</span>Dừng tất cả</button>
+          <button class="qa" data-qa="logs"><span class="qa-ic">📜</span>Nhật ký</button>
+          <button class="qa" data-qa="config"><span class="qa-ic">⚙️</span>Cấu hình</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- VIEW: THIẾT BỊ ---------- -->
+    <section class="view" id="view-devices">
+      <div class="card">
+        <div class="card-head">
+          <span class="ch-title">📱 Danh sách thiết bị</span>
+          <div class="head-actions">
+            <span class="scan-status" id="scanStatus"></span>
+            <button class="btn primary sm" id="btnScan">↻ Quét thiết bị</button>
+          </div>
+        </div>
+        <div class="script-bar">
+          <span class="sb-label">▶ Script:</span>
+          <select id="scriptSelect" class="select"></select>
+          <span class="sb-desc" id="scriptDesc"></span>
+          <div class="sb-actions">
+            <span class="sel-count" id="selCount">0 đã chọn</span>
+            <button class="btn sm" id="btnCopySerial">📋 Copy serial</button>
+            <button class="btn primary sm" id="btnRunSel">▶ Chạy hàng loạt</button>
+            <button class="btn danger sm" id="btnStopSel">⏹ Dừng hàng loạt</button>
+          </div>
+        </div>
+        <div class="notice warn" id="notActivated" hidden>
+          <span class="notice-ic">⚠️</span>
+          <div class="notice-body">
+            <div class="notice-title" id="notActivatedTitle">Có thiết bị chưa kích hoạt pokemontool</div>
+            <div class="notice-desc" id="notActivatedList"></div>
+          </div>
+          <button class="notice-x" id="notActivatedClose" title="Ẩn">✕</button>
+        </div>
+        <div class="progress-wrap" id="progressWrap" hidden>
+          <div class="progress"><div class="bar" id="progressBar"></div></div>
+          <div class="progress-text" id="progressText"></div>
+        </div>
+        <div class="table-wrap">
+          <table class="devices">
+            <thead><tr>
+              <th class="col-check"><input type="checkbox" id="checkAll" title="Chọn tất cả"/></th>
+              <th class="col-idx">#</th><th>Tên thiết bị</th><th>IP local</th>
+              <th>Serial number</th><th>iOSAuto</th><th>PokémonTool</th><th>Thao tác</th>
+            </tr></thead>
+            <tbody id="deviceRows"></tbody>
+          </table>
+          <div class="empty" id="emptyState">
+            <img class="ball-empty" src="assets/pokeball3d.png" alt="">
+            <p id="emptyMsg">Chưa có thiết bị. Bấm <b>Quét thiết bị</b> để dò máy.</p>
+            <p class="hint" id="emptyHint"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- VIEW: CẤU HÌNH ---------- -->
+    <section class="view" id="view-config">
+      <div class="cfg-card">
+        <div class="cfg-head">
+          <div class="cfg-ic">🔑</div>
+          <div>
+            <div class="cfg-title">Cấu hình</div>
+            <div class="cfg-subtitle">API key &amp; tuỳ chọn kết nối cho script reg</div>
+          </div>
+        </div>
+
+        <label class="cfg-flabel" for="cfgApiKey">API KEY — IMAPICLOUD</label>
+        <div class="input-group" id="apiGroup">
+          <span class="ig-icon">🔑</span>
+          <input type="password" id="cfgApiKey" class="ig-input" placeholder="api-key-cua-ban" autocomplete="off" spellcheck="false"/>
+          <button type="button" class="ig-btn" id="cfgApiEye" title="Hiện / ẩn">👁</button>
+          <button type="button" class="ig-btn" id="cfgApiClear" title="Xoá">✕</button>
+        </div>
+        <div class="cfg-help" id="apiHelp">Khoá lấy link xác nhận email Pokémon. Tự động đẩy xuống máy khi bấm <b>Chạy</b>.</div>
+
+        <div class="cfg-divider"></div>
+
+        <div class="toggle-row">
+          <div class="tr-txt">
+            <div class="tr-title"><span class="tr-ic">📶</span> Sử dụng 4G</div>
+            <div class="tr-desc">Bật để dùng dữ liệu di động 4G khi reg (đổi IP giữa các tài khoản).</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="use4g"/>
+            <span class="slider"><span class="knob"></span></span>
+          </label>
+        </div>
+
+        <div class="config-actions">
+          <button class="btn primary" id="btnCfgSave">💾 Lưu cấu hình</button>
+          <span class="cfg-state" id="cfgState"></span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- VIEW: NHẬT KÝ ---------- -->
+    <section class="view" id="view-logs">
+      <div class="card">
+        <div class="card-head"><span class="ch-title">📜 Nhật ký hoạt động</span><button class="link" id="feedClear">Xoá</button></div>
+        <div class="feed feed-full" id="fullFeed"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer class="footbar">
+    <div class="foot-left"><i class="dot" id="footDot"></i> <span id="footServer">đang kiểm tra máy chủ…</span></div>
+    <div class="foot-mid">
+      <span class="muted">API Key:</span>
+      <span class="apikey" id="footApiKey">••••••••••••••••</span>
+      <button class="eye" id="apiEye" title="Hiện/ẩn">👁️</button>
+    </div>
+    <div class="foot-right">
+      <button class="btn ghost sm" id="btnSupport">🎧 Hỗ trợ</button>
+    </div>
+  </footer>
+</div>
+
+  <!-- ===================== Drawer log ===================== -->
+  <div class="drawer-overlay" id="logOverlay" hidden></div>
+  <aside class="drawer" id="logDrawer" hidden>
+    <div class="drawer-head">
+      <div><div class="drawer-title" id="logTitle">Log</div><div class="drawer-sub" id="logSub"></div></div>
+      <div class="drawer-head-act">
+        <span class="run-dot" id="runDot"></span>
+        <button class="btn danger sm" id="btnLogStop">⏹ Dừng</button>
+        <button class="btn sm" id="btnLogClose">✕</button>
+      </div>
+    </div>
+    <pre class="log-body" id="logBody"></pre>
+  </aside>
+
+  <!-- ===================== Toasts ===================== -->
+  <div class="toasts" id="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
