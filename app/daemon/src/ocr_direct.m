@@ -1,9 +1,23 @@
 // ocr_direct.m — Vision OCR chạy trực tiếp trong daemon (không cần tweak)
 // Dùng framebuffer capture + Vision framework để OCR mà không phụ thuộc app foreground.
+// QUAN TRỌNG: Vision OCR có thể crash daemon → chạy trong tiến trình CON (isolated).
 #import <Foundation/Foundation.h>
 #import <Vision/Vision.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <spawn.h>
+#include <signal.h>
+#include <sys/wait.h>
+#include "log.h"
+
+#define DAEMON_BIN "/var/jb/usr/local/iosauto/bin/iosautod"
+#define OCR_TMP_PREFIX "/var/jb/usr/local/iosauto/.ocr."
+
+extern char **environ;
 
 // Prototype từ fbcap.m
 extern int fbcap_jpeg(unsigned char **out, size_t *out_len, double scale, int quality);
@@ -119,55 +133,146 @@ static NSString *run_vision_ocr(CGImageRef cg, CGFloat W, CGFloat H, NSString *l
     } @catch (NSException *e) { return [NSString stringWithFormat:@"ERR ocr exception: %@", e.reason ?: @"?"]; }
 }
 
-// C interface cho daemon
-// Chụp framebuffer + OCR trực tiếp, không cần tweak
-// Trả chuỗi JSON array (caller free), hoặc NULL nếu lỗi (lỗi ghi vào err_out)
-char *ocr_direct_run(const char *lang, int rx, int ry, int rw, int rh,
-                     int screen_w, int screen_h, char *err_out, size_t err_len) {
+// ===== TIẾN TRÌNH CON: chạy OCR thực sự (được gọi từ iosautod --ocr) =====
+// Chụp framebuffer + Vision OCR → ghi JSON ra file → exit.
+// Tiến trình con bị crash thì daemon VẪN SỐNG.
+int ocr_direct_run_child(const char *lang, int rx, int ry, int rw, int rh,
+                          int screen_w, int screen_h, const char *out_path) {
     @autoreleasepool {
-        // 1) Chụp framebuffer
+        // 1) Chụp framebuffer (scale=1.0, quality=90 cho OCR rõ)
         unsigned char *jpg = NULL; size_t jpg_len = 0;
-        int rc = fbcap_jpeg(&jpg, &jpg_len, 1.0, 85);
+        int rc = fbcap_jpeg(&jpg, &jpg_len, 1.0, 90);
         if (rc != 0 || !jpg) {
-            if (err_out) snprintf(err_out, err_len, "fbcap failed rc=%d", rc);
             free(jpg);
-            return NULL;
+            return 1;
         }
 
         // 2) Decode JPEG → CGImage
         NSData *data = [[NSData alloc] initWithBytesNoCopy:jpg length:jpg_len freeWhenDone:YES];
         CGImageSourceRef src = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
-        if (!src) {
-            if (err_out) snprintf(err_out, err_len, "CGImageSourceCreateWithData failed");
-            return NULL;
-        }
+        if (!src) return 2;
         CGImageRef cg = CGImageSourceCreateImageAtIndex(src, 0, NULL);
         CFRelease(src);
-        if (!cg) {
-            if (err_out) snprintf(err_out, err_len, "CGImageSourceCreateImageAtIndex failed");
-            return NULL;
-        }
+        if (!cg) return 3;
 
         // 3) Chạy Vision OCR
         NSString *langStr = lang ? [NSString stringWithUTF8String:lang] : @"en-US,vi-VN";
         CGRect region = (rw > 0 && rh > 0) ? CGRectMake(rx, ry, rw, rh) : CGRectZero;
-        CGFloat W = screen_w > 0 ? screen_w : 390;  // fallback
+        CGFloat W = screen_w > 0 ? screen_w : 390;
         CGFloat H = screen_h > 0 ? screen_h : 844;
 
         NSString *result = run_vision_ocr(cg, W, H, langStr, region);
         CGImageRelease(cg);
 
-        // 4) Kiểm tra lỗi
-        if ([result hasPrefix:@"ERR"]) {
-            if (err_out) {
-                const char *utf = [result UTF8String];
-                snprintf(err_out, err_len, "%s", utf ? utf : "unknown error");
-            }
-            return NULL;
-        }
-
-        // 5) Trả JSON (copy để caller free)
+        // 4) Ghi kết quả ra file
         const char *utf = [result UTF8String];
-        return utf ? strdup(utf) : NULL;
+        if (!utf) return 4;
+        FILE *f = fopen(out_path, "w");
+        if (!f) return 5;
+        fputs(utf, f);
+        fclose(f);
+
+        return 0;
     }
+}
+
+// ===== C interface cho daemon (ISOLATED: spawn tiến trình con) =====
+// Spawn tiến trình con chạy OCR → đọc kết quả từ file.
+// Con bị crash thì daemon VẪN SỐNG, chỉ trả lỗi.
+char *ocr_direct_run(const char *lang, int rx, int ry, int rw, int rh,
+                     int screen_w, int screen_h, char *err_out, size_t err_len) {
+    // Tạo file tạm duy nhất cho mỗi lần OCR
+    static unsigned g_ocr_seq = 0;
+    unsigned seq = __sync_fetch_and_add(&g_ocr_seq, 1);
+    char tmp_path[256];
+    snprintf(tmp_path, sizeof(tmp_path), "%s%u.json", OCR_TMP_PREFIX, seq);
+    unlink(tmp_path);
+
+    // Chuẩn bị arguments cho tiến trình con
+    char s_lang[80], s_rx[16], s_ry[16], s_rw[16], s_rh[16], s_sw[16], s_sh[16];
+    snprintf(s_lang, sizeof(s_lang), "%s", lang ? lang : "en-US,vi-VN");
+    snprintf(s_rx, sizeof(s_rx), "%d", rx);
+    snprintf(s_ry, sizeof(s_ry), "%d", ry);
+    snprintf(s_rw, sizeof(s_rw), "%d", rw);
+    snprintf(s_rh, sizeof(s_rh), "%d", rh);
+    snprintf(s_sw, sizeof(s_sw), "%d", screen_w);
+    snprintf(s_sh, sizeof(s_sh), "%d", screen_h);
+
+    char *argv[] = { (char *)DAEMON_BIN, "--ocr", s_lang, s_rx, s_ry, s_rw, s_rh, s_sw, s_sh, tmp_path, NULL };
+
+    pid_t pid = 0;
+    if (posix_spawn(&pid, DAEMON_BIN, NULL, NULL, argv, environ) != 0) {
+        if (err_out) snprintf(err_out, err_len, "posix_spawn OCR thất bại");
+        return NULL;
+    }
+
+    // Chờ tiến trình con tối đa 15s (OCR có thể chậm trên màn nhiều chữ)
+    int status = 0, done = 0;
+    for (int i = 0; i < 300; i++) {   // 300 × 50ms = 15s
+        pid_t r = waitpid(pid, &status, WNOHANG);
+        if (r == pid) { done = 1; break; }
+        if (r < 0) break;
+        usleep(50 * 1000);
+    }
+    if (!done) {
+        log_msg("ocr: tiến trình con quá 15s → kill");
+        kill(pid, SIGKILL);
+        waitpid(pid, &status, 0);
+        unlink(tmp_path);
+        if (err_out) snprintf(err_out, err_len, "OCR timeout (15s)");
+        return NULL;
+    }
+
+    // Kiểm tra exit status
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        int sig = WIFSIGNALED(status) ? WTERMSIG(status) : 0;
+        int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        if (sig) {
+            log_msg("ocr: tiến trình con bị signal %d (daemon vẫn sống)", sig);
+            if (err_out) snprintf(err_out, err_len, "OCR bị crash (signal %d)", sig);
+        } else {
+            log_msg("ocr: tiến trình con exit code %d", code);
+            if (err_out) snprintf(err_out, err_len, "OCR lỗi (code %d)", code);
+        }
+        unlink(tmp_path);
+        return NULL;
+    }
+
+    // Đọc kết quả từ file
+    FILE *f = fopen(tmp_path, "r");
+    if (!f) {
+        unlink(tmp_path);
+        if (err_out) snprintf(err_out, err_len, "không đọc được file OCR");
+        return NULL;
+    }
+    fseek(f, 0, SEEK_END);
+    long sz = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    if (sz <= 0) {
+        fclose(f);
+        unlink(tmp_path);
+        if (err_out) snprintf(err_out, err_len, "file OCR rỗng");
+        return NULL;
+    }
+
+    char *buf = malloc((size_t)sz + 1);
+    if (!buf) {
+        fclose(f);
+        unlink(tmp_path);
+        if (err_out) snprintf(err_out, err_len, "oom");
+        return NULL;
+    }
+    size_t got = fread(buf, 1, (size_t)sz, f);
+    buf[got] = '\0';
+    fclose(f);
+    unlink(tmp_path);
+
+    // Kiểm tra lỗi từ kết quả
+    if (strncmp(buf, "ERR", 3) == 0) {
+        if (err_out) snprintf(err_out, err_len, "%s", buf);
+        free(buf);
+        return NULL;
+    }
+
+    return buf;
 }

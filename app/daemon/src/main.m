@@ -9,6 +9,7 @@
 #include "log.h"
 #include "crashlog.h"
 #include "fbcap.h"
+#include "ocr_direct.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,6 +27,18 @@ int main(int argc, char **argv) {
             int quality  = atoi(argv[3]);
             int pw = atoi(argv[4]), ph = atoi(argv[5]);
             return fbcap_capture_to_file(argv[6], scale, quality, pw, ph);
+        }
+
+        // CHẾ ĐỘ OCR BIỆT LẬP: iosautod --ocr <lang> <rx> <ry> <rw> <rh> <sw> <sh> <out_path>
+        // Do ocr_direct_run() spawn. Chụp + Vision OCR → ghi JSON ra file rồi THOÁT.
+        // Vision có thể crash → chạy biệt lập để daemon cha vẫn sống.
+        if (argc >= 10 && strcmp(argv[1], "--ocr") == 0) {
+            const char *lang = argv[2];
+            int rx = atoi(argv[3]), ry = atoi(argv[4]);
+            int rw = atoi(argv[5]), rh = atoi(argv[6]);
+            int sw = atoi(argv[7]), sh = atoi(argv[8]);
+            const char *out_path = argv[9];
+            return ocr_direct_run_child(lang, rx, ry, rw, rh, sw, sh, out_path);
         }
 
         int port = DEFAULT_PORT;
