@@ -13,7 +13,7 @@ Icon: https://iosautos.com/repo/CydiaIcon.png
 Depiction: https://iosautos.com/repo/
 Description: iOSAuto — tự động hoá iPhone. iOS 15-16 rootless.
 Filename: debs/com.iosauto_0.7.100_iphoneos-arm64.deb
-Size: 617124
-MD5sum: 529fbc2968a9ea0e1b25cc4c2ca51528
-SHA1: b188b5340ee372d8b82c2c876c2f3779237f54de
-SHA256: 8bfffa9e8961c5dfcb670fd763b250a9d63afd43677b61f85fd2eaf7782fb954
+Size: 617978
+MD5sum: ae76a412225b37d5c1dfdc04e1132ea8
+SHA1: ad1eaa0e545958cbb13e183b530f93e787bba214
+SHA256: 7b93d20cfc4b7cf022847f687e2b36f5d945594e43dad79b544ee48384bb7c04
