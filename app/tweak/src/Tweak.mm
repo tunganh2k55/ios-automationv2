@@ -2667,7 +2667,13 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
     int one = 1; setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
     struct sockaddr_in a; memset(&a, 0, sizeof(a));
     a.sin_family = AF_INET; a.sin_addr.s_addr = htonl(INADDR_LOOPBACK); a.sin_port = htons(TOUCH_PORT);
-    if (connect(fd, (struct sockaddr *)&a, sizeof(a)) != 0) { close(fd); return; }
+    // Retry connect vài lần nếu daemon chưa sẵn sàng (đặc biệt sau respring iOS 15).
+    int connected = 0;
+    for (int attempt = 0; attempt < 5 && !connected; attempt++) {
+        if (attempt > 0) usleep(500 * 1000);   // 500ms giữa các lần thử
+        if (connect(fd, (struct sockaddr *)&a, sizeof(a)) == 0) connected = 1;
+    }
+    if (!connected) { close(fd); return; }
     self.fd = fd;
     char buf[256]; std::string acc;
     for (;;) {
