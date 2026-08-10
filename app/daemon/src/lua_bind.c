@@ -654,11 +654,26 @@ static int l_safariSwipe(lua_State *L) {
 }
 
 // safari.click(field) → true/false, diag. Bấm element web khớp `field` (CSS selector hoặc text/
-// placeholder/name/id/aria-label/button/link) — tự cuộn tới rồi bắn pointer/mouse + el.click().
+// placeholder/name/id/aria-label/button/link) — TỰ SWIPE tới element + sleep 0.5s + bấm.
 // Hàm ẨN (không có trong gợi ý syntax) — bấm nút/link web khi HID không tới WebContent.
 static int l_safariClick(lua_State *L) {
     const char *field = luaL_checkstring(L, 1);
     char reply[600] = {0};
+
+    // 1. Swipe tới element trước
+    int swipe_rc = touch_safari_swipe(field, reply, sizeof(reply));
+    if (swipe_rc != 0 || strncmp(reply, "OK", 2) != 0) {
+        // Swipe thất bại → trả lỗi
+        lua_pushboolean(L, 0);
+        lua_pushstring(L, reply);
+        return 2;
+    }
+
+    // 2. Sleep 0.5s để element ổn định sau scroll
+    usleep(500000);
+
+    // 3. Click element
+    memset(reply, 0, sizeof(reply));
     int rc = touch_safari_click(field, reply, sizeof(reply));
     lua_pushboolean(L, rc == 0 && strncmp(reply, "OK", 2) == 0);
     lua_pushstring(L, reply);
