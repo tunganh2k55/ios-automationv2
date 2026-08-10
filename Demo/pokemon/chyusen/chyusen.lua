@@ -346,75 +346,6 @@ local function typeWait(field, value, timeout, gap)
     return waitFor(function() return safari.type(field, value) end, timeout, gap)
 end
 
--- ===== Xoá dữ liệu Safari QUA CÀI ĐẶT (mô phỏng người: Cài đặt → Safari → Xóa Lịch sử & Dữ liệu) =====
--- Lý do: clearAppData("com.apple.mobilesafari") đôi khi CÒN SÓT tab cũ (phiên trước hiện lại). Nút
--- "Xóa Lịch sử và Dữ liệu Trang web" trong Cài đặt dọn CẢ tab + lịch sử + cookie + dữ liệu web sạch
--- như người bấm tay. Dùng tapDump (khớp nhãn accessibility native, KHÔNG phụ thuộc OCR/độ phân giải).
-local PREFS = "com.apple.Preferences"
-
--- Nhãn nút MỞ hộp xoá trong Settings>Safari — đa ngôn ngữ (tapDump khớp CHỨA chuỗi con, không phân
--- biệt hoa/thường). Máy VI/EN/JA đều trúng 1 trong các chuỗi này.
-local CLEAR_OPEN = { "Xóa Lịch sử và Dữ liệu", "Clear History and Website", "履歴とWebサイトデータを消去", "履歴とWeb" }
--- Nhãn nút XÁC NHẬN (đỏ) trên action sheet.
-local CLEAR_CONFIRM = { "Xóa Lịch sử và Dữ liệu", "Clear History and Data", "履歴とデータを消去" }
-
--- scrollDownStep: vuốt LÊN 1 nấc để cuộn danh sách native XUỐNG. Toạ độ ĐIỂM (point) an toàn cho ≥
--- iPhone SE2 375×667; kéo có kiểm soát (0.35s) để tránh lướt quá đà.
-local function scrollDownStep()
-    swipe(188, 520, 188, 190, 0.35)
-    sleep(0.6)
-end
-
--- tapAnyDump: thử tapDump lần lượt từng nhãn trong `labels`; trả true NGAY khi tap được 1 nhãn.
-local function tapAnyDump(labels)
-    for _, s in ipairs(labels) do
-        if tapDump(s) then return true end
-    end
-    return false
-end
-
--- findTapScroll: thử tap các nhãn; chưa thấy thì cuộn xuống 1 nấc rồi thử lại, tối đa `maxScroll` nấc.
-local function findTapScroll(labels, maxScroll)
-    if tapAnyDump(labels) then return true end
-    for _ = 1, (maxScroll or 10) do
-        scrollDownStep()
-        if tapAnyDump(labels) then return true end
-    end
-    return false
-end
-
--- clearSafariViaSettings: MÔ PHỎNG người dùng: home → mở Cài đặt (kill trước để về gốc) → cuộn tới
--- Safari, tap → cuộn tới "Xóa Lịch sử và Dữ liệu Trang web", tap → xác nhận trên action sheet → home.
--- Trả true nếu bấm được nút XÁC NHẬN; false nếu kẹt bước nào (log rõ). Đa ngôn ngữ VI/EN/JA.
--- LƯU Ý iOS 16.4+: có thêm bước chọn "khoảng thời gian" trước khi xác nhận — máy test 16.2 không có;
--- nếu gặp bản mới mà kẹt, cần thêm nhãn "Tất cả thời gian / All history / すべての履歴" vào bước xác nhận.
-local function clearSafariViaSettings()
-    home(); sleep(0.6)
-    kill(PREFS); sleep(0.4)                 -- kill để Cài đặt mở LẠI từ gốc (không kẹt màn trước đó)
-    if not launch(PREFS) then notify("clearSafari: không mở được Cài đặt", 3); return false end
-    sleep(1.6)
-    -- 1) Vào mục Safari.
-    if not findTapScroll({ "Safari" }, 12) then
-        notify("clearSafari: không thấy mục Safari trong Cài đặt", 3); home(); return false
-    end
-    sleep(1.2)
-    -- 2) Cuộn tới cuối, bấm "Xóa Lịch sử và Dữ liệu Trang web".
-    if not findTapScroll(CLEAR_OPEN, 12) then
-        notify("clearSafari: không thấy nút Xóa Lịch sử & Dữ liệu (trong Safari)", 3); home(); return false
-    end
-    sleep(1.0)
-    -- 3) Xác nhận trên action sheet (có thể hiện chậm → thử 2 nhịp).
-    local okc = tapAnyDump(CLEAR_CONFIRM)
-    if not okc then sleep(0.8); okc = tapAnyDump(CLEAR_CONFIRM) end
-    if not okc then
-        notify("clearSafari: không thấy nút xác nhận Xóa (action sheet)", 3); home(); return false
-    end
-    sleep(1.2)
-    notify("clearSafari: đã Xóa Lịch sử & Dữ liệu Safari qua Cài đặt ✓", 2)
-    home(); sleep(0.5)
-    return true
-end
-
 -- ===== Cấu hình login lottery =====
 local CHYUSEN_TYPE = "pokemon"        -- loại chyusen cần lấy (cố định type=pokemon)
 local LOGIN_URL    = "https://www.pokemoncenter-online.com/lottery/login.html"
@@ -450,13 +381,9 @@ local function main(key)
         return "ok"
     end
 
-    -- (3) Fresh session: xoá dữ liệu Safari để không dính phiên/tab account trước (mỗi lượt 1 account
-    -- khác). CHÍNH: bấm "Xóa Lịch sử & Dữ liệu" trong Cài đặt (dọn cả TAB cũ — clearAppData còn sót).
-    -- Hỏng UI (đổi ngôn ngữ / iOS mới) → DỰ PHÒNG clearAppData (cần iOSAuto ≥ 0.7.65).
-    if not clearSafariViaSettings() then
-        local okc, nc = clearAppData("com.apple.mobilesafari")
-        notify("clearSafari dự phòng clearAppData: " .. (okc and (tostring(nc) .. " mục") or ("lỗi " .. tostring(nc))), 2)
-    end
+    -- (3) Fresh session: xoá dữ liệu Safari để không dính phiên/tab account trước.
+    local okc, nc = clearAppData("com.apple.mobilesafari")
+    notify("clearAppData Safari: " .. (okc and (tostring(nc) .. " mục") or ("lỗi " .. tostring(nc))), 2)
 
     -- (4) Mở trang login lottery, chờ load xong (≤30s, tự thử lại nếu Safari treo launch).
     notify("Mở trang login lottery...", 3)

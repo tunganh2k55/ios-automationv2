@@ -460,12 +460,12 @@ function main()
 
 
   notify("Mở Link Đăng Ký", 3)
-  if not openAndWait("https://www.pokemoncenter-online.com/login") then   -- chờ trang login load xong (≤60s, tự thử lại nếu Safari treo launch)
-    return regFailed("Mở trang login thất bại (Safari treo launch)", content)
-  end
+  ensureSafari()                                      -- kéo Safari lên trước để tweak kịp inject sau clearAppData
+  openUrl("https://www.pokemoncenter-online.com/login")
+  sleep(2)
 
-  -- Điền email — chờ ô xuất hiện tối đa 10s (trang tự tải xong lúc nào điền lúc đó).
-  local ok, diag = fillWait("login-form-regist-email", email, 10)
+  -- Điền email — chờ ô xuất hiện tối đa 60s (trang tự tải xong lúc nào điền lúc đó).
+  local ok, diag = fillWait("login-form-regist-email", email, 60)
   if not ok then
     return regFailed("Load Web Failed", content)   -- không thấy ô email = web chưa/không load được
   end
