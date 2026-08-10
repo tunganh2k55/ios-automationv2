@@ -13,7 +13,7 @@ include $(THEOS)/makefiles/common.mk
 TOOL_NAME = iosautod
 
 iosautod_FILES = $(wildcard src/*.c) $(wildcard src/*.m) $(wildcard lua/*.c)
-iosautod_CFLAGS = -fobjc-arc -Isrc -Ilua -DLUA_USE_IOS -Wno-deprecated-declarations -Wno-arc-performSelector-leaks -Wno-error
+iosautod_CFLAGS = -fobjc-arc -Isrc -Ilua -Iinclude -DLUA_USE_IOS -Wno-deprecated-declarations -Wno-arc-performSelector-leaks -Wno-error
 # BẪY 2: chỉ link framework có gọi symbol thật (Foundation/CoreFoundation).
 # SpringBoardServices / LaunchServices nạp qua dlopen → KHÔNG link.
 # IOSurface/CoreGraphics/ImageIO: chụp framebuffer (fbcap.m). IOMobileFramebuffer +
@@ -21,6 +21,13 @@ iosautod_CFLAGS = -fobjc-arc -Isrc -Ilua -DLUA_USE_IOS -Wno-deprecated-declarati
 # SystemConfiguration (proxy) + LaunchServices (openUrl): API bị "prohibited" trên iOS SDK →
 # nạp động dlopen/dlsym trong luaext.m, KHÔNG link.
 iosautod_FRAMEWORKS = Foundation CoreFoundation IOSurface CoreGraphics ImageIO Security Vision
+
+# ===== VNC SERVER (libvncserver) =====
+# Enable VNC server tích hợp (comment dòng dưới để tắt)
+iosautod_CFLAGS += -DHAVE_LIBVNCSERVER
+iosautod_LDFLAGS = -Llib
+iosautod_LIBRARIES = vncserver turbojpeg png18 lzo2 ssl crypto sasl2 z
+
 iosautod_INSTALL_PATH = /usr/local/iosauto/bin
 
 include $(THEOS_MAKE_PATH)/tool.mk
@@ -36,6 +43,8 @@ before-package::
 	mkdir -p "$(THEOS_STAGING_DIR)/usr/local/iosauto/web"
 	cp -f "$(WEB_SRC)"/*.html "$(WEB_SRC)"/*.js "$(WEB_SRC)"/*.css "$(THEOS_STAGING_DIR)/usr/local/iosauto/web/"
 	cp -f "$(WEB_SRC)"/*.png "$(THEOS_STAGING_DIR)/usr/local/iosauto/web/" 2>/dev/null || true
+	@echo ">> stage novnc/"
+	if [ -d "$(WEB_SRC)/novnc" ]; then cp -r "$(WEB_SRC)/novnc" "$(THEOS_STAGING_DIR)/usr/local/iosauto/web/"; fi
 	@echo ">> nhúng entitlements"
 	ldid -S"$(THEOS_PROJECT_DIR)/entitlements.plist" "$(THEOS_STAGING_DIR)/usr/local/iosauto/bin/iosautod"
 	@echo ">> maintainer scripts"

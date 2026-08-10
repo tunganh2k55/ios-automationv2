@@ -10,6 +10,7 @@
 #include "crashlog.h"
 #include "fbcap.h"
 #include "ocr_direct.h"
+#include "vnc.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -67,6 +68,13 @@ int main(int argc, char **argv) {
         scripts_init();
         images_init();
         license_init();
+
+        // VNC server (port 5900)
+        const char *vnc_pass = getenv("IOSAUTO_VNC_PASS");  // NULL = không mật khẩu
+        if (vnc_init(5900, vnc_pass) == 0) {
+            log_msg("vnc: server sẵn sàng port 5900");
+        }
+
         log_msg("iosautod khởi động (port=%d, usb_port=%d, web=%s)", port, usb_port, web_dir);
 
         int rc = httpd_run(port, usb_port, web_dir);

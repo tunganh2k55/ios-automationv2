@@ -26,4 +26,10 @@ void fbcap_set_capture_interval(double min_sec, double ttl_sec);
 // TTL (ms) hiện tại — imgmatch dùng để quyết định tái dùng frame cache.
 long fbcap_frame_ttl_ms(void);
 
+// ===== RAW FRAMEBUFFER (cho VNC) =====
+// Chụp framebuffer thật → raw BGRA (không encode JPEG). Dùng cho VNC server.
+// *outbuf = malloc buffer (caller free), *w/*h = pixel size, *bpr = bytes per row.
+// Trả 0 nếu OK.
+int fbcap_raw(unsigned char **outbuf, size_t *outlen, int *w, int *h, size_t *bpr);
+
 #endif

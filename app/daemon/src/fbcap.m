@@ -274,3 +274,59 @@ int fbcap_jpeg_isolated(unsigned char **outbuf, size_t *outlen, double scale, in
     *outbuf = b; *outlen = got;
     return 0;
 }
+
+// ===== RAW FRAMEBUFFER (cho VNC) =====
+// Chụp framebuffer → raw BGRA buffer (không encode). Dùng cho VNC server.
+int fbcap_raw(unsigned char **outbuf, size_t *outlen, int *out_w, int *out_h, size_t *out_bpr) {
+    // Dùng chung cơ chế với fbcap_jpeg, nhưng không encode.
+    // Luôn chụp biệt lập để tránh crash daemon.
+    // NOTE: Đây là implementation đơn giản, sau có thể tối ưu bằng cách chia sẻ IOSurface.
+
+    load_syms();
+    if (!pRender) return 10;
+
+    int pw = 375, ph = 667;
+    touch_screen_size(&pw, &ph);
+    size_t W = (size_t)pw * 2, H = (size_t)ph * 2;
+    if (W < 320 || W > 2000) { W = 750; H = 1334; }
+
+    fbcap_gate_enter();
+
+    pthread_mutex_lock(&g_fb_mu);
+
+    // Tạo surface tạm
+    IOSurfaceRef src = make_surface(W, H);
+    if (!src) {
+        pthread_mutex_unlock(&g_fb_mu);
+        return 11;
+    }
+
+    // Render
+    pRender(0, CFSTR("LCD"), src, 0, 0);
+
+    // Lock và copy raw data
+    IOSurfaceLock(src, kIOSurfaceLockReadOnly, NULL);
+    void *base = IOSurfaceGetBaseAddress(src);
+    size_t bpr = IOSurfaceGetBytesPerRow(src);
+    size_t total = bpr * H;
+
+    unsigned char *buf = malloc(total);
+    if (buf && base) {
+        memcpy(buf, base, total);
+    }
+
+    IOSurfaceUnlock(src, kIOSurfaceLockReadOnly, NULL);
+    CFRelease(src);
+
+    pthread_mutex_unlock(&g_fb_mu);
+
+    if (!buf) return 12;
+
+    *outbuf = buf;
+    *outlen = total;
+    *out_w = (int)W;
+    *out_h = (int)H;
+    *out_bpr = bpr;
+
+    return 0;
+}

@@ -2,6 +2,7 @@
 #include "video.h"
 #include "license.h"
 #include "log.h"
+#include "vnc_ws.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -186,6 +187,21 @@ static void handle_conn(int fd) {
             reply(fd, 403, "application/json", nl, strlen(nl));
             free(req); close(fd); return;
         }
+    }
+
+    // WebSocket VNC proxy (cho noVNC): /vnc
+    if (vnc_ws_is_vnc_path(r.path)) {
+        int ws_ret = vnc_ws_handle_upgrade(fd, req);
+        if (ws_ret == 1) {
+            // Upgrade thành công, proxy thread đang chạy, KHÔNG close fd (thread sở hữu)
+            free(req);
+            return;
+        } else if (ws_ret < 0) {
+            reply(fd, 502, "text/plain", "VNC proxy error", 15);
+        } else {
+            reply(fd, 400, "text/plain", "WebSocket upgrade required", 26);
+        }
+        free(req); close(fd); return;
     }
 
     // WebSocket video: nâng cấp + phục vụ 1 client (chiếm riêng kết nối tới khi rớt).

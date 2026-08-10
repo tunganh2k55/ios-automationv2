@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>iOSAuto VNC</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #1c1c1e; color: #fff; font-family: system-ui, sans-serif; }
+    header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #0e0e10; border-bottom: 1px solid #333; }
+    header h1 { margin: 0; font-size: 18px; }
+    .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #ff3b30; }
+    .status.ok { background: #30d158; }
+    .info { font-size: 13px; color: #8e8e93; }
+    main { display: flex; flex-direction: column; align-items: center; padding: 20px; }
+    #vnc-screen { background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,.5); }
+    #vnc-screen canvas { display: block; }
+    .controls { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+    .controls button { padding: 10px 18px; border: 1px solid #444; border-radius: 8px; background: #2c2c2e; color: #fff; cursor: pointer; font-size: 14px; }
+    .controls button:hover { background: #3c3c3e; }
+    .controls button.primary { background: #6366f1; border-color: #6366f1; }
+    .log { margin-top: 20px; width: 100%; max-width: 600px; background: #0e0e10; border-radius: 8px; padding: 12px; font-size: 12px; max-height: 200px; overflow-y: auto; }
+    .log pre { margin: 0; white-space: pre-wrap; color: #8e8e93; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>iOSAuto VNC</h1>
+    <span class="status" id="status"></span>
+    <span class="info" id="info">Connecting...</span>
+  </header>
+
+  <main>
+    <div id="vnc-screen"></div>
+
+    <div class="controls">
+      <button id="btnConnect" class="primary">Connect</button>
+      <button id="btnDisconnect">Disconnect</button>
+      <button id="btnFullscreen">Fullscreen</button>
+    </div>
+
+    <div class="log">
+      <pre id="log"></pre>
+    </div>
+  </main>
+
+  <!-- noVNC core -->
+  <script type="module">
+    import RFB from './novnc/core/rfb.js';
+
+    const statusEl = document.getElementById('status');
+    const infoEl = document.getElementById('info');
+    const screenEl = document.getElementById('vnc-screen');
+    const logEl = document.getElementById('log');
+    const btnConnect = document.getElementById('btnConnect');
+    const btnDisconnect = document.getElementById('btnDisconnect');
+    const btnFullscreen = document.getElementById('btnFullscreen');
+
+    let rfb = null;
+
+    function log(msg) {
+      const pre = logEl.querySelector('pre');
+      const time = new Date().toLocaleTimeString();
+      pre.textContent += `[${time}] ${msg}\n`;
+      pre.scrollTop = pre.scrollHeight;
+    }
+
+    function setStatus(ok, text) {
+      statusEl.classList.toggle('ok', ok);
+      infoEl.textContent = text;
+    }
+
+    function connect() {
+      if (rfb) {
+        rfb.disconnect();
+      }
+
+      // WebSocket URL: ws://host:port/vnc
+      const host = window.location.hostname;
+      const port = window.location.port || '8080';
+      const wsUrl = `ws://${host}:${port}/vnc`;
+
+      log(`Connecting to ${wsUrl}...`);
+      setStatus(false, 'Connecting...');
+
+      try {
+        rfb = new RFB(screenEl, wsUrl, {
+          shared: true,
+          credentials: { password: '' }
+        });
+
+        rfb.scaleViewport = true;
+        rfb.resizeSession = false;
+        rfb.clipViewport = true;
+
+        rfb.addEventListener('connect', () => {
+          log('Connected to VNC server');
+          setStatus(true, `Connected - ${rfb.capabilities.width}x${rfb.capabilities.height}`);
+        });
+
+        rfb.addEventListener('disconnect', (e) => {
+          log(`Disconnected: ${e.detail.clean ? 'clean' : 'unclean'}`);
+          setStatus(false, 'Disconnected');
+          rfb = null;
+        });
+
+        rfb.addEventListener('credentialsrequired', () => {
+          log('Server requires password');
+          const password = prompt('VNC Password:');
+          if (password) {
+            rfb.sendCredentials({ password });
+          } else {
+            rfb.disconnect();
+          }
+        });
+
+        rfb.addEventListener('securityfailure', (e) => {
+          log(`Security failure: ${e.detail.status} - ${e.detail.reason}`);
+          setStatus(false, 'Auth failed');
+        });
+
+        rfb.addEventListener('desktopname', (e) => {
+          log(`Desktop name: ${e.detail.name}`);
+        });
+
+      } catch (err) {
+        log(`Error: ${err.message}`);
+        setStatus(false, 'Connection error');
+      }
+    }
+
+    function disconnect() {
+      if (rfb) {
+        log('Disconnecting...');
+        rfb.disconnect();
+        rfb = null;
+      }
+    }
+
+    btnConnect.addEventListener('click', connect);
+    btnDisconnect.addEventListener('click', disconnect);
+    btnFullscreen.addEventListener('click', () => {
+      if (screenEl.requestFullscreen) {
+        screenEl.requestFullscreen();
+      }
+    });
+
+    // Auto-connect on load
+    setTimeout(connect, 500);
+  </script>
+</body>
+</html>
