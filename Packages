@@ -1,6 +1,6 @@
 Package: com.iosauto
 Name: iOSAuto
-Version: 0.7.112
+Version: 0.7.104
 Architecture: iphoneos-arm64
 Maintainer: iOSAuto Team
 Author: iOSAuto Team
@@ -12,8 +12,8 @@ Provides: com.iosauto.daemon, com.iosauto.touch, com.iosauto.app
 Icon: https://iosautos.com/repo/CydiaIcon.png
 Depiction: https://iosautos.com/repo/
 Description: iOSAuto — tự động hoá iPhone. iOS 15-16 rootless.
-Filename: debs/com.iosauto_0.7.112_iphoneos-arm64.deb
-Size: 642914
-MD5sum: bd11d73da72ce0c4a52645442776b97c
-SHA1: 23a7a89a9a640f894fe2875d340c0f4ab794fc6c
-SHA256: ce6903e27c0d2ae8e49a27d9b91d1d5b33d63a7fc62aa01a06f57baa790cdda1
+Filename: debs/com.iosauto_0.7.104_iphoneos-arm64.deb
+Size: 619222
+MD5sum: 43452875676ae88541c9aae011786730
+SHA1: 886ec9564a68118a26d9d5fd6b344624c4ae9dd6
+SHA256: 2f4a368aaec313b8d6ee236fdf7836b408ad082c65e02dd59d94ea7132742a9c
