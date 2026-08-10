@@ -143,3 +143,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Commit repo vào web-license/test-repo/ trên main → server git pull là có bản mới
+      # iosautos.com/test-repo sẽ serve từ thư mục này
+      - name: Commit test-repo to main
+        run: |
+          cd $GITHUB_WORKSPACE
+          # Fresh checkout main để tránh conflict
+          git fetch origin main
+          git checkout -B main origin/main
+          git config user.email "ci@iosauto.local"
+          git config user.name "iosauto-ci"
+          # Copy repo files
+          rm -rf web-license/test-repo/debs
+          mkdir -p web-license/test-repo/debs
+          cp out_merged/repo/debs/*.deb web-license/test-repo/debs/
+          cp out_merged/repo/Packages web-license/test-repo/
+          cp out_merged/repo/Packages.bz2 web-license/test-repo/ 2>/dev/null || true
+          cp out_merged/repo/Packages.xz web-license/test-repo/ 2>/dev/null || true
+          cp out_merged/repo/Release web-license/test-repo/
+          # Commit và push
+          git add web-license/test-repo/
+          VER=$(awk -F': ' '/^Version:/{print $2; exit}' app/dist/control)
+          git commit -m "ci: update test-repo v${VER} [skip ci]" || echo "Nothing to commit"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
