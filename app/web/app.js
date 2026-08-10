@@ -1,5 +1,7 @@
 "use strict";
 
+import RFB from './novnc/core/rfb.js';
+
 // Toạ độ logic (điểm) — lấy từ /api/status (màn thật, vd 375x667).
 const LOGICAL = { w: 375, h: 667 };
 
@@ -12,35 +14,80 @@ const api = async (path, body) => {
   return r.json();
 };
 
-// ---- Ảnh màn hình (STREAM MJPEG) ----
-// Một kết nối mở sẵn: daemon đẩy khung liên tục, <img> render như video.
-// Không cần WebCodecs, hoạt động trên mọi trình duyệt.
-const shot = $("#shot");
+// ---- VNC Stream (thay MJPEG) ----
+// noVNC kết nối WebSocket tới /vnc → VNC server (port 5900) → framebuffer
+const vncContainer = $("#vncContainer");
 const noimg = $("#noimg");
-const STREAM_URL = "/api/stream";
+let rfb = null;
 let streamOn = false;
 
 function startStream() {
-  if (streamOn) return;
+  if (streamOn && rfb) return;
   streamOn = true;
-  shot.onload = () => { shot.style.display = "block"; noimg.style.display = "none"; };
-  shot.onerror = () => {
-    if (!streamOn) return;
+
+  const wsUrl = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/vnc";
+
+  try {
+    rfb = new RFB(vncContainer, wsUrl, {
+      shared: true,
+      credentials: { password: '' }
+    });
+
+    rfb.scaleViewport = true;
+    rfb.resizeSession = false;
+    rfb.clipViewport = false;
+    rfb.viewOnly = false;  // cho phép điều khiển qua VNC
+
+    rfb.addEventListener('connect', () => {
+      vncContainer.style.display = "block";
+      noimg.style.display = "none";
+      console.log("VNC connected");
+    });
+
+    rfb.addEventListener('disconnect', (e) => {
+      console.log("VNC disconnected:", e.detail.clean ? "clean" : "unclean");
+      if (streamOn) {
+        // Auto reconnect
+        setTimeout(() => {
+          if (streamOn) {
+            rfb = null;
+            startStream();
+          }
+        }, 1000);
+      }
+    });
+
+    rfb.addEventListener('credentialsrequired', () => {
+      const password = prompt('VNC Password:');
+      if (password) {
+        rfb.sendCredentials({ password });
+      } else {
+        rfb.disconnect();
+      }
+    });
+
+  } catch (e) {
+    console.error("VNC error:", e);
     noimg.style.display = "flex";
-    setTimeout(() => { if (streamOn) shot.src = STREAM_URL + "?t=" + Date.now(); }, 800);
-  };
-  shot.src = STREAM_URL + "?t=" + Date.now();
+    setTimeout(() => { if (streamOn) startStream(); }, 1000);
+  }
 }
+
 function stopStream() {
   streamOn = false;
-  shot.src = "";               // đóng kết nối MJPEG
-  shot.style.display = "none";
+  if (rfb) {
+    try { rfb.disconnect(); } catch (e) {}
+    rfb = null;
+  }
+  vncContainer.style.display = "none";
   noimg.style.display = "flex";
 }
-// Stream tự cập nhật → refresh thủ công không cần nữa (giữ hàm để chỗ khác gọi khỏi lỗi).
-function refreshShot() {}
 
-// Nút View Màn / Tắt View: người dùng chủ động bật/tắt xem màn. Tab bị ẩn thì tạm dừng.
+function refreshShot() {
+  // VNC tự cập nhật liên tục, không cần refresh
+}
+
+// Nút View Màn / Tắt View
 let viewWanted = true;
 const btnView = $("#btnView");
 function updateViewBtn() {
@@ -54,110 +101,61 @@ function syncStream() {
 }
 btnView.onclick = () => { viewWanted = !viewWanted; syncStream(); };
 document.addEventListener("visibilitychange", syncStream);
-$("#btnRefresh").onclick = () => { viewWanted = true; stopStream(); startStream(); updateViewBtn(); };  // nối lại stream
-// Nút Home: 1 lần = về màn chính. Nhấn ĐÚP (trong 350ms):
-//   - Màn ĐANG TẮT/khoá lúc bắt đầu → chỉ bật màn + mở khoá (lần bấm 1 đã làm), KHÔNG mở switcher.
-//   - Màn đang bật → App Switcher (như iPhone bấm Home 2 lần).
-// Biết màn tắt/bật nhờ msg của lần bấm đầu: WAKE trả "OK wake+unlock" khi máy đang khoá.
+$("#btnRefresh").onclick = () => { viewWanted = true; stopStream(); setTimeout(startStream, 100); updateViewBtn(); };
+
+// Nút Home
 let homeTapTimer = null;
-let homeWasLocked = false;                 // trạng thái màn lúc bắt đầu cử chỉ (từ lần bấm 1)
+let homeWasLocked = false;
 $("#phoneHome").onclick = async () => {
-  if (homeTapTimer) {                      // ---- lần bấm THỨ 2 (bấm đúp) ----
+  if (homeTapTimer) {
     clearTimeout(homeTapTimer); homeTapTimer = null;
-    if (!homeWasLocked) {                  // màn đang bật → App Switcher
+    if (!homeWasLocked) {
       try { await api("switcher"); } catch (e) {}
-    }                                       // màn đang tắt → lần bấm 1 đã bật+mở khoá, không làm gì thêm
+    }
     return;
   }
-  // ---- lần bấm THỨ 1: bật màn + mở khoá, ghi nhớ màn trước đó có đang khoá không ----
   let res = null;
   try { res = await api("wake"); } catch (e) {}
   homeWasLocked = !!(res && typeof res.msg === "string" && /wake\+unlock/i.test(res.msg));
-  homeTapTimer = setTimeout(async () => {  // không có bấm 2 → bấm 1 lần = về màn chính
+  homeTapTimer = setTimeout(async () => {
     homeTapTimer = null;
     try { await api("home"); } catch (e) {}
   }, 350);
 };
-updateViewBtn();   // stream chỉ bật trong boot() SAU khi kiểm tra license
+updateViewBtn();
 
-// ---- Toạ độ trên ảnh → point ----
+// ---- Toạ độ trên VNC canvas → point ----
 const screen = $("#screen");
 const crosshair = $("#crosshair");
 const swipeLine = $("#swipeLine");
 const coords = $("#coords");
-let dragStart = null;
 
 function toPoint(ev) {
-  const r = (shot.style.display !== "none" ? shot : screen).getBoundingClientRect();
+  // Lấy canvas của noVNC
+  const canvas = vncContainer.querySelector("canvas");
+  const r = canvas ? canvas.getBoundingClientRect() : screen.getBoundingClientRect();
   const px = Math.max(0, Math.min(ev.clientX - r.left, r.width));
   const py = Math.max(0, Math.min(ev.clientY - r.top, r.height));
   return {
     x: Math.round((px / r.width) * LOGICAL.w),
     y: Math.round((py / r.height) * LOGICAL.h),
-    // px/py tương đối so với khung screen (để vẽ overlay)
     ox: ev.clientX - screen.getBoundingClientRect().left,
     oy: ev.clientY - screen.getBoundingClientRect().top,
   };
 }
-function resetDrag() { dragStart = null; swipeLine.hidden = true; }
 
-// ---- Kênh điều khiển realtime (WebSocket) → touch liên tục bám tay ----
-// Tap (không di chuyển) vẫn qua /api/tap (tin cậy cho nút). Kéo/vuốt → stream d/m/u qua WS.
-let ctrlWS = null;
-function ctrlConnect() {
-  try {
-    ctrlWS = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/control");
-    ctrlWS.onclose = () => { ctrlWS = null; setTimeout(ctrlConnect, 1000); };
-    ctrlWS.onerror = () => { try { ctrlWS.close(); } catch (e) {} };
-  } catch (e) { setTimeout(ctrlConnect, 1000); }
-}
-// ctrlConnect() được gọi trong boot() sau khi xác nhận đã kích hoạt.
-function ctrlSend(phase, p) {
-  if (ctrlWS && ctrlWS.readyState === 1) ctrlWS.send(phase + " " + p.x + " " + p.y);
-}
-
-let dragging = false, lastMoveTs = 0;
-screen.addEventListener("pointerdown", (ev) => {
-  ev.preventDefault();
-  dragStart = toPoint(ev);
-  dragging = false;
-  try { screen.setPointerCapture(ev.pointerId); } catch (e) {}
-  swipeLine.hidden = true;
-});
+// VNC đã tự xử lý pointer events qua RFB protocol
+// Nhưng vẫn giữ coords hiển thị và fallback REST API cho keyboard
 screen.addEventListener("pointermove", (ev) => {
-  if (!dragStart) return;
   const p = toPoint(ev);
   coords.textContent = `x: ${p.x}, y: ${p.y}`;
-  const dist = Math.hypot(p.ox - dragStart.ox, p.oy - dragStart.oy);
-  if (!dragging && dist > 8) { dragging = true; ctrlSend("d", dragStart); }   // bắt đầu kéo: down tại điểm gốc
-  if (dragging) {
-    const now = performance.now();
-    if (now - lastMoveTs > 16) { lastMoveTs = now; ctrlSend("m", p); }         // ~60 move/s
-  }
-});
-screen.addEventListener("pointercancel", () => { if (dragging && dragStart) ctrlSend("u", dragStart); resetDrag(); dragging = false; });
-screen.addEventListener("pointerup", async (ev) => {
-  const end = toPoint(ev);
-  const start = dragStart;
-  const wasDrag = dragging;
-  resetDrag(); dragging = false;
-  if (!start) return;
-  try {
-    if (wasDrag) ctrlSend("u", end);                     // kết thúc kéo mượt
-    else { await api("tap", { x: start.x, y: start.y }); kbFocus(); }  // tap: đường tin cậy + sẵn sàng gõ
-  } catch (e) {}
-  setTimeout(refreshShot, 150);
 });
 
-// ================== Bàn phím từ web UI → gõ vào ô đang focus trên iPhone ==================
-// kbCapture = <textarea> ẩn. Khi nó ĐANG FOCUS thì mọi ký tự / IME / paste (Ctrl+V) được chuyển
-// sang thiết bị qua /api/type; Backspace/Enter qua KEY. Tap vào màn iPhone sẽ tự focus kbCapture
-// nên sau khi tap trúng ô nhập là gõ được ngay. Bấm vào ô nhập của web (editor, tên file, tìm app)
-// sẽ lấy focus khỏi kbCapture → gõ/paste ở đó lại bình thường. Nút ⌨ bật/tắt cơ chế này.
+// ================== Bàn phím từ web UI ==================
 const kbCapture = $("#kbCapture");
 const kbBtn = $("#btnKb");
-let kbAuto = true;          // tap vào màn có tự bật bàn phím thiết bị không
-let kbComposing = false;    // đang gõ IME (tiếng Việt telex/unikey…) → chờ compositionend
+let kbAuto = true;
+let kbComposing = false;
 
 function kbUpdateBtn() { kbBtn.classList.toggle("on", kbAuto); }
 function kbFocus() { if (kbAuto) try { kbCapture.focus({ preventScroll: true }); } catch (e) {} }
@@ -167,7 +165,6 @@ kbUpdateBtn();
 async function kbType(text) { if (text) try { await api("type", { text }); } catch (e) {} }
 async function kbKey(name) { try { await api("touchcmd", { cmd: "KEY " + name }); } catch (e) {} }
 
-// Gửi nội dung vừa nhập rồi xoá sạch để lần sau chỉ còn phần MỚI (mỗi ký tự/paste gửi 1 lần).
 function kbFlush() { const v = kbCapture.value; if (v) { kbCapture.value = ""; kbType(v); } }
 kbCapture.addEventListener("compositionstart", () => { kbComposing = true; });
 kbCapture.addEventListener("compositionend", () => { kbComposing = false; kbFlush(); });
@@ -175,23 +172,21 @@ kbCapture.addEventListener("input", () => { if (!kbComposing) kbFlush(); });
 kbCapture.addEventListener("keydown", (e) => {
   if (e.key === "Backspace") { e.preventDefault(); kbKey("BACK"); }
   else if (e.key === "Enter") { e.preventDefault(); kbKey("RETURN"); }
-  // ký tự thường + paste để sự kiện 'input' xử lý (bắt được cả IME lẫn Ctrl+V)
 });
-kbCapture.addEventListener("paste", (e) => {   // dán trực tiếp cho chắc (không lệ thuộc 'input')
+kbCapture.addEventListener("paste", (e) => {
   const t = (e.clipboardData || window.clipboardData) && (e.clipboardData || window.clipboardData).getData("text");
   if (t) { e.preventDefault(); kbCapture.value = ""; kbType(t); }
 });
 
-// Ctrl+V khi KHÔNG đứng trong ô nhập web nào → vẫn dán sang thiết bị.
 document.addEventListener("paste", (e) => {
   const t = e.target;
-  if (t === kbCapture) return;   // đã xử lý ở trên
-  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return; // dán vào ô web
+  if (t === kbCapture) return;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   const txt = (e.clipboardData || window.clipboardData) && (e.clipboardData || window.clipboardData).getData("text");
   if (txt) { e.preventDefault(); kbType(txt); }
 });
 
-// ---- Script Lua: danh sách file · editor · lưu/mở/xoá · chạy ----
+// ---- Script Lua ----
 const scriptBox = $("#scriptBox");
 const scriptName = $("#scriptName");
 const fileList = $("#fileList");
@@ -199,20 +194,18 @@ const saveState = $("#saveState");
 const scriptOut = $("#scriptOut");
 const logTitle = $("#logTitle");
 let scriptDirty = false;
-let gScripts = [];       // tên các file
-let currentFile = "";    // file đang mở
+let gScripts = [];
+let currentFile = "";
 const btnEncrypt = $("#btnEncrypt");
 const btnSaveEl = $("#btnSave");
 
-// File .luax = script đã mã hoá + ký (bảo vệ mã nguồn). Không đọc/sửa lại được, chỉ chạy.
 function isEncName(n) { return /\.luax$/i.test((n || "").trim()); }
 
-// Bật/tắt "chế độ đã mã hoá": editor read-only, khoá nút Lưu/Mã hoá khi đang mở .luax.
 function applyEncMode(name) {
   const enc = isEncName(name);
-  scriptBox.readOnly = enc;                 // trường hợp fallback <textarea>
+  scriptBox.readOnly = enc;
   scriptBox.classList.toggle("locked", enc);
-  if (window.iosautoEditor) window.iosautoEditor.updateOptions({ readOnly: enc });  // Monaco
+  if (window.iosautoEditor) window.iosautoEditor.updateOptions({ readOnly: enc });
   btnSaveEl.disabled = enc;
   btnEncrypt.disabled = enc;
 }
@@ -224,7 +217,6 @@ function markDirty(d) {
 }
 scriptBox.addEventListener("input", () => markDirty(true));
 
-// Chuẩn hoá tên: tự thêm .lua nếu thiếu.
 function normName(n) {
   n = (n || "").trim();
   if (!n) return "";
@@ -288,9 +280,7 @@ $("#btnNew").onclick = () => {
   scriptName.focus();
 };
 
-// ================== ⬆ Nhập file từ máy tính ==================
-// Định tuyến theo ĐUÔI: .lua/.luax/.txt/.json/.csv/.md/.ini/.conf -> script_save (thư mục scripts);
-// .png/.jpg/.jpeg/.gif/.bmp/.webp -> image_save (thư mục images). Đuôi khác -> bỏ qua.
+// ================== Import file ==================
 const importFile = $("#importFile");
 const IMPORT_IMG_EXT = /\.(png|jpe?g|gif|bmp|webp)$/i;
 const IMPORT_TXT_EXT = /\.(lua|luax|txt|json|csv|md|ini|conf)$/i;
@@ -298,8 +288,8 @@ const IMPORT_TXT_EXT = /\.(lua|luax|txt|json|csv|md|ini|conf)$/i;
 $("#btnImport").onclick = () => importFile.click();
 
 function importSanitizeName(name) {
-  name = (name || "").split(/[\\/]/).pop().trim();     // bỏ đường dẫn, chỉ giữ tên file
-  return name.replace(/[^A-Za-z0-9._-]/g, "_");        // ký tự lạ -> _ (khớp *_valid_name của daemon)
+  name = (name || "").split(/[\\/]/).pop().trim();
+  return name.replace(/[^A-Za-z0-9._-]/g, "_");
 }
 function importReadText(file) {
   return new Promise((res, rej) => {
@@ -318,7 +308,7 @@ function importReadDataURL(file) {
 
 importFile.onchange = async () => {
   const files = Array.from(importFile.files || []);
-  importFile.value = "";   // reset để lần sau chọn lại cùng file vẫn kích hoạt onchange
+  importFile.value = "";
   if (!files.length) return;
 
   let okScript = 0, okImg = 0, skipped = 0, failed = 0;
@@ -359,7 +349,7 @@ importFile.onchange = async () => {
 };
 
 async function saveScript() {
-  if (isEncName(currentFile)) { return; }   // .luax không sửa/lưu đè
+  if (isEncName(currentFile)) { return; }
   const name = normName(scriptName.value);
   if (!name) { alert("Nhập tên file trước (vd auto.lua)"); scriptName.focus(); return; }
   scriptName.value = name;
@@ -373,8 +363,6 @@ async function saveScript() {
 }
 $("#btnSave").onclick = saveScript;
 
-// 🔒 Mã hoá: mã hoá + ký nội dung editor → lưu thành <tên>.luax (bảo vệ mã nguồn).
-// Một chiều: file .luax không giải mã/đọc lại được nếu không có khoá nhúng trong app.
 async function encryptScript() {
   if (isEncName(currentFile)) { alert("File này đã mã hoá rồi."); return; }
   const content = scriptBox.value;
@@ -382,7 +370,7 @@ async function encryptScript() {
   const base = normName(scriptName.value) || "script.lua";
   const outName = base.replace(/\.[A-Za-z0-9]+$/, "") + ".luax";
   if (!confirm(
-    `Mã hoá nội dung hiện tại → lưu thành “${outName}”?\n\n` +
+    `Mã hoá nội dung hiện tại → lưu thành "${outName}"?\n\n` +
     `• File .luax KHÔNG đọc/sửa lại được (mã nguồn đã được bảo vệ).\n` +
     `• Chỉ app này (mang đúng khoá) mới giải mã & chạy được.\n` +
     `• Nên giữ lại bản .lua gốc để chỉnh sửa về sau.`)) return;
@@ -393,7 +381,7 @@ async function encryptScript() {
   if (!r.ok || !r.blob) { alert("Mã hoá lỗi: " + (r.msg || "")); return; }
   const s = await api("script_save", { name: outName, content: r.blob });
   if (!s.ok) { alert("Lưu .luax lỗi: " + (s.msg || "")); return; }
-  currentFile = "";                 // ép mở lại để hiện chế độ đã mã hoá
+  currentFile = "";
   markDirty(false);
   await loadScriptList();
   await openFile(outName);
@@ -402,9 +390,6 @@ async function encryptScript() {
 }
 btnEncrypt.onclick = encryptScript;
 
-// ⬇ Tải: tải file script đang mở về máy tính.
-// Nếu đang mở 1 file đã lưu → lấy bản đã lưu trên thiết bị qua script_read (đúng nguyên bản,
-// dùng được cho cả .luax). Nếu là file mới/chưa lưu → tải thẳng nội dung trong editor.
 async function downloadScript() {
   const name = normName(scriptName.value);
   if (!name) { alert("Chưa có file để tải (nhập tên hoặc mở 1 file)."); scriptName.focus(); return; }
@@ -413,7 +398,7 @@ async function downloadScript() {
     try {
       const r = await api("script_read", { name: currentFile });
       if (r.ok) content = r.content || "";
-    } catch (e) { /* dùng nội dung editor làm dự phòng */ }
+    } catch (e) {}
   }
   const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -438,19 +423,18 @@ $("#btnDelete").onclick = async () => {
   } else alert("Xoá lỗi: " + (r.msg || ""));
 };
 
-// Ctrl+S để lưu, khỏi rời bàn phím.
 scriptBox.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") { e.preventDefault(); saveScript(); }
 });
 
-// ---- Chạy script NỀN: nút Chạy ↔ Dừng, theo dõi log tăng dần qua /api/run/log ----
+// ---- Chạy script ----
 let runId = null, runPoll = null, runOffset = 0;
 const btnRun = $("#btnRun");
 function setRunningUI(on) {
   if (on) { btnRun.textContent = "⏹ Dừng"; btnRun.classList.remove("run"); btnRun.classList.add("danger"); btnRun.title = "Dừng script"; }
   else { btnRun.textContent = "▶ Chạy"; btnRun.classList.remove("danger"); btnRun.classList.add("run"); btnRun.title = "Chạy script"; }
 }
-let runPolling = false;   // chống các lần poll chồng nhau khi daemon trả lời chậm
+let runPolling = false;
 async function pollRun() {
   if (runPolling) return;
   runPolling = true;
@@ -460,14 +444,13 @@ async function pollRun() {
   finally { runPolling = false; }
   if (r.log) { scriptOut.textContent += r.log; scriptOut.scrollTop = scriptOut.scrollHeight; }
   if (typeof r.next === "number") runOffset = r.next;
-  if (!r.running && runId !== null) {   // chỉ kết thúc 1 LẦN (tránh in trùng "— xong —")
+  if (!r.running && runId !== null) {
     if (runPoll) { clearInterval(runPoll); runPoll = null; }
     runId = null; setRunningUI(false);
     scriptOut.textContent += "\n— xong —"; scriptOut.scrollTop = scriptOut.scrollHeight;
-    setTimeout(refreshShot, 150);
   }
 }
-// Bắt đầu chạy 1 đoạn code (mặc định = nội dung editor). Dùng chung cho nút ▶ Chạy và "Chạy thử" ở bảng Hàm Lua.
+
 async function startRun(code) {
   logTitle.textContent = "▶ Log chạy";
   scriptOut.textContent = "";
@@ -480,31 +463,28 @@ async function startRun(code) {
   pollRun();
 }
 btnRun.onclick = () => {
-  if (runId) { api("run/stop", {}).catch(() => {}); return; }   // đang chạy → dừng
+  if (runId) { api("run/stop", {}).catch(() => {}); return; }
   startRun(scriptBox.value);
 };
-// Đồng bộ nút Chạy/Dừng với trạng thái THẬT của thiết bị.
-// Dùng khi: mở app, kéo-reload trang, mở lại tab, hoặc script được start từ máy khác.
-// Gọi lúc boot() và lặp lại 5s/lần (xem cuối file).
+
 async function syncRunState() {
   let rs;
   try { rs = await api("run"); } catch (e) { return; }
   if (!rs) return;
-  if (rs.busy && !runId) {                 // thiết bị đang chạy mà UI tưởng rảnh → nối lại + hiện ⏹ Dừng
+  if (rs.busy && !runId) {
     runId = rs.runid; runOffset = 0;
     logTitle.textContent = "▶ Log chạy";
     scriptOut.textContent = "";
     setRunningUI(true);
     if (!runPoll) { runPoll = setInterval(pollRun, 500); pollRun(); }
-  } else if (!rs.busy && runId) {          // thiết bị đã rảnh mà UI vẫn tưởng đang chạy → về ▶ Chạy
+  } else if (!rs.busy && runId) {
     if (runPoll) { clearInterval(runPoll); runPoll = null; }
     runId = null; setRunningUI(false);
   }
 }
 
-// ---- Cầu nối cho bảng tra Hàm Lua (docs.js) ----
+// ---- Cầu nối docs.js ----
 window.iosauto = {
-  // Chèn đoạn ví dụ vào editor tại vị trí con trỏ (không ghi đè script đang có).
   insertCode(code) {
     const el = scriptBox;
     const s = el.selectionStart ?? el.value.length;
@@ -518,7 +498,6 @@ window.iosauto = {
     el.focus();
     markDirty(true);
   },
-  // Chạy thử ví dụ ngay (không đụng nội dung editor). Đang chạy dở → báo để tránh chồng lệnh.
   runCode(code) {
     if (runId) { alert("Đang chạy một script khác — bấm ⏹ Dừng trước đã."); return false; }
     startRun(code);
@@ -542,14 +521,14 @@ async function refreshStatus() {
       `Qua USB (cắm cáp, mở trên PC):  http://localhost:${s.usbPort}\n` +
       `Nhiều máy cùng cắm USB: chạy app/control/usb_web.py để tự chia cổng (8081, 8082, …); ` +
       `cổng trên iPhone luôn ${s.usbPort}, chỉ cổng localhost phía PC tăng dần.`;
-    document.title = `${devName} - iOSAuto`;   // vd "SE2 - iOSAuto"
+    document.title = `${devName} - iOSAuto`;
     if (s.screen) { LOGICAL.w = s.screen.w; LOGICAL.h = s.screen.h; }
   } catch (e) {
     $("#statusDot").className = "dot off";
     $("#deviceLine").textContent = "mất kết nối daemon";
   }
 }
-// gApps = CHỈ app do người dùng cài (type "User": App Store/sideload), loại app hệ thống.
+
 let gApps = [];
 async function loadApps() {
   const r = await api("apps");
@@ -558,14 +537,14 @@ async function loadApps() {
     .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
 }
 
-// ---- Menu helper (cạnh nút ↻) ----
+// ---- Menu helper ----
 const helperMenu = $("#helperMenu");
 $("#btnHelper").onclick = (e) => { e.stopPropagation(); helperMenu.hidden = !helperMenu.hidden; };
 helperMenu.addEventListener("click", (e) => e.stopPropagation());
 document.addEventListener("click", () => { helperMenu.hidden = true; });
 $("#miApps").onclick = () => { helperMenu.hidden = true; openApps(); };
 
-// OCR: nhận dạng chữ trên màn (ảnh fbcap độ phân giải cao, Vision revision 3) → mỗi dòng bấm để tap.
+// OCR
 const ocrLangSelect = $("#ocrLangSelect");
 let ocrLang = localStorage.getItem("iosauto.ocrLang") || "en-US,vi-VN";
 if (ocrLangSelect) {
@@ -605,7 +584,7 @@ async function runOcr() {
 }
 $("#miOcr").onclick = () => { helperMenu.hidden = true; runOcr(); };
 
-// Dump XML: xuất cây UIView của app foreground (page source) vào khung log.
+// Dump XML
 $("#miDump").onclick = async () => {
   helperMenu.hidden = true;
   logTitle.textContent = "🧬 Dump XML";
@@ -618,8 +597,7 @@ $("#miDump").onclick = async () => {
   } catch (e) { scriptOut.textContent = "Dump lỗi kết nối"; }
 };
 
-// ---- Panel helper: app người dùng đã cài (bấm để MỞ app trên iPhone) ----
-// Mở trong khung editor (editor thu nhỏ lại), không phải modal che màn.
+// ---- Panel helper: app ----
 const helperPanel = $("#helperPanel");
 const appsList = $("#appsList");
 const appsSearch = $("#appsSearch");
@@ -651,7 +629,7 @@ function renderAppsList(filter) {
   });
 }
 function openApps() {
-  helperPanel.hidden = false;   // editor thu nhỏ lại nhường chỗ panel
+  helperPanel.hidden = false;
   appsSearch.value = "";
   renderAppsList("");
   appsSearch.focus();
@@ -660,7 +638,7 @@ function closeApps() { helperPanel.hidden = true; }
 $("#helperClose").onclick = closeApps;
 appsSearch.addEventListener("input", () => renderAppsList(appsSearch.value));
 
-// ---- Bố cục linh hoạt: thu/mở danh sách script · mở rộng helper · kéo chỉnh chiều cao log ----
+// ---- Bố cục ----
 const ideEl = document.querySelector(".ide");
 $("#btnToggleFiles").onclick = () => {
   const collapsed = ideEl.classList.toggle("files-collapsed");
@@ -680,8 +658,8 @@ $("#helperWide").onclick = () => { helperPanel.classList.toggle("wide"); };
   rez.addEventListener("pointermove", (e) => {
     if (!dragging) return;
     const rect = pane.getBoundingClientRect();
-    let h = rect.bottom - e.clientY - 6;                 // chiều cao log theo con trỏ
-    const maxH = Math.max(90, rect.height - 210);        // chừa tối thiểu cho editor
+    let h = rect.bottom - e.clientY - 6;
+    const maxH = Math.max(90, rect.height - 210);
     h = Math.max(90, Math.min(h, maxH));
     logPane.style.flex = "none";
     logPane.style.height = h + "px";
@@ -692,7 +670,7 @@ $("#helperWide").onclick = () => { helperPanel.classList.toggle("wide"); };
 })();
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !helperPanel.hidden) closeApps(); });
 
-// ================== Helper: Chụp & cắt ảnh → lưu thư mục images của iosauto ==================
+// ================== Helper: Chụp & cắt ảnh ==================
 const imgTool = $("#imgTool");
 const imgShot = $("#imgShot");
 const imgStage = $("#imgStage");
@@ -700,10 +678,8 @@ const imgSel = $("#imgSel");
 const imgSaveBtn = $("#imgSave");
 const imgNameInp = $("#imgName");
 const imgListEl = $("#imgList");
-let imgSelRect = null;   // vùng chọn theo px hiển thị + kích thước ảnh hiển thị lúc chọn
+let imgSelRect = null;
 
-// Copy chạy được cả trên HTTP thường: navigator.clipboard CHỈ có ở HTTPS/localhost,
-// còn trang này mở qua http://<ip>:8080 → phải fallback execCommand("copy").
 function copyTextCompat(text) {
   if (navigator.clipboard && window.isSecureContext)
     return navigator.clipboard.writeText(text).then(() => true).catch(() => copyTextFallback(text));
@@ -727,18 +703,16 @@ function captureShot() {
   imgHint("⏳ đang chụp…");
   imgShot.onload = () => imgHint("Kéo chuột trên ảnh để chọn vùng cắt");
   imgShot.onerror = () => imgHint("chụp lỗi (bật daemon?)");
-  imgShot.src = "/api/screenshot?t=" + Date.now();   // khung mới, không cache
+  imgShot.src = "/api/screenshot?t=" + Date.now();
   imgClearSel();
 }
 
-// Đổi vị trí chuột trên ảnh hiển thị → toạ độ ĐIỂM MÀN (point, khớp tap/tapText/vùng OCR).
 function imgPointCoords(clientX, clientY, r) {
   const px = Math.max(0, Math.min(clientX - r.left, r.width));
   const py = Math.max(0, Math.min(clientY - r.top, r.height));
   return { x: Math.round((px / r.width) * LOGICAL.w), y: Math.round((py / r.height) * LOGICAL.h) };
 }
 
-// Kéo chuột trên ảnh → vẽ khung chọn. Click (không kéo) → in toạ độ điểm vào log.
 let imgDrag = null;
 imgStage.addEventListener("pointerdown", (e) => {
   if (e.target !== imgShot) return;
@@ -748,7 +722,6 @@ imgStage.addEventListener("pointerdown", (e) => {
 });
 imgStage.addEventListener("pointermove", (e) => {
   if (!imgDrag) {
-    // Không kéo: rê chuột trên ảnh → hiện toạ độ điểm màn ngay trên hint.
     if (e.target === imgShot) {
       const p = imgPointCoords(e.clientX, e.clientY, imgShot.getBoundingClientRect());
       imgHint(`📍 (${p.x}, ${p.y}) — kéo để chọn vùng, click để ghi toạ độ vào log`);
@@ -775,7 +748,7 @@ imgStage.addEventListener("pointerup", (e) => {
     return;
   }
   imgClearSel();
-  if (wasClick) {   // click không kéo → in toạ độ điểm màn vào log chạy
+  if (wasClick) {
     const p = imgPointCoords(r.left + dx, r.top + dy, r);
     scriptOut.textContent += (scriptOut.textContent ? "\n" : "") + `📍 toạ độ điểm: (${p.x}, ${p.y}) — tap(${p.x}, ${p.y})`;
     scriptOut.scrollTop = scriptOut.scrollHeight;
@@ -783,7 +756,6 @@ imgStage.addEventListener("pointerup", (e) => {
   }
 });
 
-// Cắt theo vùng chọn (quy đổi về toạ độ ảnh GỐC) → base64 → POST image_save
 imgSaveBtn.onclick = async () => {
   if (!imgSelRect || !imgShot.naturalWidth) return;
   const sX = imgShot.naturalWidth / imgSelRect.dispW, sY = imgShot.naturalHeight / imgSelRect.dispH;
@@ -805,12 +777,11 @@ imgSaveBtn.onclick = async () => {
   } catch (e) { imgHint("❌ lỗi kết nối"); imgSaveBtn.disabled = false; }
 };
 
-// ⬆ Nhập ảnh từ máy tính → lưu THẲNG vào thư mục images (không cần chụp/cắt).
 const imgImportFile = $("#imgImportFile");
 $("#imgImport").onclick = () => imgImportFile.click();
 imgImportFile.onchange = async () => {
   const files = Array.from(imgImportFile.files || []);
-  imgImportFile.value = "";   // reset để chọn lại cùng file vẫn kích hoạt
+  imgImportFile.value = "";
   if (!files.length) return;
   let ok = 0, failed = 0;
   const errs = [];
@@ -830,7 +801,6 @@ imgImportFile.onchange = async () => {
   if (failed && errs.length) alert(`Nhập ảnh: ${ok} OK, ${failed} lỗi\n\n` + errs.slice(0, 12).join("\n"));
 };
 
-// Gallery ảnh đã lưu
 async function loadImages() {
   let r; try { r = await api("images"); } catch (e) { return; }
   const list = (r.images || []).sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
@@ -869,14 +839,13 @@ $("#imgRecap").onclick = captureShot;
 imgTool.addEventListener("click", (e) => { if (e.target === imgTool) closeImgTool(); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !imgTool.hidden) closeImgTool(); });
 
-// ================== CỔNG LICENSE: chặn cứng khi thiết bị chưa kích hoạt ==================
+// ================== LICENSE ==================
 const licGate = $("#licenseGate");
 function showGate(j) {
   $("#licMachine").textContent = (j && j.machineId) || "—";
   $("#licServer").textContent = (j && j.server) || "—";
   licGate.hidden = false;
-  try { stopStream(); } catch (e) {}   // đảm bảo không còn xem màn
-  // USB Local: hỏi /api/status (route status KHÔNG bị cổng chặn) để hiện cổng USB.
+  try { stopStream(); } catch (e) {}
   api("status").then((s) => {
     if (s && s.usbPort) {
       $("#licUsb").textContent = "localhost:" + s.usbPort;
@@ -905,28 +874,24 @@ $("#licKey").addEventListener("keydown", (e) => { if (e.key === "Enter") licActi
 
 async function checkLicense() {
   try {
-    const j = await api("license");          // route này KHÔNG bị cổng chặn
+    const j = await api("license");
     if (j && j.activated) { hideGate(); return true; }
     showGate(j || {});
     return false;
   } catch (e) { showGate({}); return false; }
 }
 
-// Chỉ khởi động stream/điều khiển/loader khi ĐÃ kích hoạt.
+// ---- Boot ----
 async function boot() {
   const ok = await checkLicense();
   if (!ok) return;
-  ctrlConnect();
   syncStream();
   refreshStatus();
   loadApps();
   loadScriptList();
-  refreshShot();
-  // Nếu thiết bị đang chạy sẵn 1 script (mở lại tab / máy khác / vừa kéo-reload) → nối lại + hiện ⏹ Dừng.
   await syncRunState();
   setInterval(refreshStatus, 5000);
-  setInterval(syncRunState, 5000);   // luôn giữ nút Chạy/Dừng khớp trạng thái thật, kể cả khi start từ nơi khác
-  // Kiểm tra lại license định kỳ — bị thu hồi/hết hạn → hiện lại cổng chặn.
+  setInterval(syncRunState, 5000);
   setInterval(async () => { const a = await checkLicense(); if (!a) location.reload(); }, 60000);
 }
 boot();

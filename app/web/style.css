@@ -125,6 +125,8 @@ main { flex: 1; display: flex; gap: 20px; padding: 20px; overflow: hidden; }
   box-shadow: inset 0 0 0 2px rgba(0,0,0,.6);
 }
 #shot { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+#vncContainer { width: 100%; height: 100%; display: none; }
+#vncContainer canvas { width: 100% !important; height: 100% !important; object-fit: contain; }
 .noimg {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   text-align: center; color: var(--muted); font-size: 13px; padding: 24px; line-height: 1.7;
