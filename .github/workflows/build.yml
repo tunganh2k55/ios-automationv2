@@ -142,3 +142,26 @@ jobs:
           git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-builds
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Sync repo vào web-license/test-repo/ trên main → server chỉ cần `git pull`
+      - name: Sync test-repo to main branch
+        run: |
+          cd $GITHUB_WORKSPACE
+          rm -rf web-license/test-repo/debs
+          mkdir -p web-license/test-repo/debs
+          cp out_merged/repo/debs/*.deb web-license/test-repo/debs/
+          cp out_merged/repo/Packages web-license/test-repo/
+          cp out_merged/repo/Packages.bz2 web-license/test-repo/ 2>/dev/null || true
+          cp out_merged/repo/Packages.xz web-license/test-repo/ 2>/dev/null || true
+          cp out_merged/repo/Release web-license/test-repo/
+          git config user.email "ci@iosauto.local"
+          git config user.name "iosauto-ci"
+          git add web-license/test-repo/
+          if git diff --cached --quiet; then
+            echo "test-repo không đổi, bỏ qua commit"
+          else
+            git commit -m "ci: sync test-repo v$(awk -F': ' '/^Version:/{print $2; exit}' app/dist/control) [skip ci]"
+            git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
