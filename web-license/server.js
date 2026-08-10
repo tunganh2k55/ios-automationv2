@@ -758,6 +758,18 @@ app.use('/repo', express.static(REPO_DIR, {
   },
 }));
 
+// ---- TEST Repo Sileo/APT tại /test-repo (bản build mới từ CI) ----
+// git pull ci-builds vào thư mục test-repo để test bản mới trước khi release chính thức.
+const TEST_REPO_DIR = path.join(__dirname, 'test-repo');
+app.use('/test-repo', express.static(TEST_REPO_DIR, {
+  index: 'index.html',
+  setHeaders: (res, fp) => {
+    const b = path.basename(fp);
+    if (['Packages', 'Release', 'InRelease', 'Release.gpg'].includes(b)) res.type('text/plain');
+    else if (fp.endsWith('.deb')) res.type('application/x-debian-package');
+  },
+}));
+
 // ---- Kho TẢI & CẬP NHẬT tool desktop TĨNH tại /tool/<slug>/ (mở rộng nhiều tool nhỏ) ----
 // Mỗi tool 1 thư mục web-license/tool/<slug>/ gồm:
 //   • latest.json         — manifest cập nhật (version, notes, portable{url,sha256,size}, mandatory)
