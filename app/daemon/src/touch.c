@@ -1,5 +1,6 @@
 #include "touch.h"
 #include "fbcap.h"
+#include "lua_bind.h"
 #include "log.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -579,7 +580,7 @@ int touch_safari_click(const char *field, char *reply, size_t rlen) {
 // safari.load (ẨN): chờ trang web app foreground load XONG (document.readyState == 'complete').
 // LẶP gọi verb "WEBSTATE" (mỗi lần nhanh) — nghỉ 350ms giữa các lần — tới khi 'complete' hoặc hết
 // `timeout_sec` giây (mặc định 60, trần 600). Không giữ 1 socket mở suốt 60s (tránh chẹn IPC/watchdog).
-// Trả 0 = đã load xong; khác 0 = timeout / không phải trang web foreground / lỗi mạng.
+// Trả 0 = đã load xong; khác 0 = timeout / không phải trang web foreground / lỗi mạng / bị dừng.
 int touch_safari_load(int timeout_sec, char *reply, size_t rlen) {
     if (timeout_sec <= 0) timeout_sec = 60;
     if (timeout_sec > 600) timeout_sec = 600;                    // trần an toàn
@@ -589,6 +590,11 @@ int touch_safari_load(int timeout_sec, char *reply, size_t rlen) {
     char last[600] = {0};
     int polls = 0, noweb = 0;
     for (;;) {
+        // Check user đã bấm Dừng chưa — thoát ngay
+        if (lua_run_cancelled()) {
+            snprintf(reply, rlen, "STOPPED bởi người dùng");
+            return 1;
+        }
         char r[600] = {0};
         int rc = send_verb_core_to("WEBSTATE\n", r, sizeof(r), 0, 0, 4500);   // do_log=0: tránh spam ~170 dòng
         polls++;

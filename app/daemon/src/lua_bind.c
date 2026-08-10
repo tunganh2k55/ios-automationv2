@@ -657,11 +657,13 @@ static int l_safariSwipe(lua_State *L) {
 // placeholder/name/id/aria-label/button/link) — TỰ SWIPE tới element + sleep 0.5s + bấm.
 // Hàm ẨN (không có trong gợi ý syntax) — bấm nút/link web khi HID không tới WebContent.
 static int l_safariClick(lua_State *L) {
+    if (g_cancel) return luaL_error(L, "đã dừng");
     const char *field = luaL_checkstring(L, 1);
     char reply[600] = {0};
 
     // 1. Swipe tới element trước
     int swipe_rc = touch_safari_swipe(field, reply, sizeof(reply));
+    if (g_cancel) return luaL_error(L, "đã dừng");
     if (swipe_rc != 0 || strncmp(reply, "OK", 2) != 0) {
         // Swipe thất bại → trả lỗi
         lua_pushboolean(L, 0);
@@ -669,10 +671,14 @@ static int l_safariClick(lua_State *L) {
         return 2;
     }
 
-    // 2. Sleep 0.5s để element ổn định sau scroll
-    usleep(500000);
+    // 2. Sleep 0.5s để element ổn định sau scroll (chia nhỏ để dừng được)
+    for (int i = 0; i < 10; i++) {
+        if (g_cancel) return luaL_error(L, "đã dừng");
+        usleep(50000);  // 50ms x 10 = 500ms
+    }
 
     // 3. Click element
+    if (g_cancel) return luaL_error(L, "đã dừng");
     memset(reply, 0, sizeof(reply));
     int rc = touch_safari_click(field, reply, sizeof(reply));
     lua_pushboolean(L, rc == 0 && strncmp(reply, "OK", 2) == 0);
@@ -684,9 +690,11 @@ static int l_safariClick(lua_State *L) {
 // (document.readyState == 'complete'). Mặc định tối đa 60 giây (trần 600). Trả true nếu load xong,
 // false nếu hết giờ / không có trang web foreground. Hàm ẨN (không có trong gợi ý syntax).
 static int l_safariLoad(lua_State *L) {
+    if (g_cancel) return luaL_error(L, "đã dừng");
     int timeout = (int)luaL_optinteger(L, 1, 60);
     char reply[600] = {0};
     int rc = touch_safari_load(timeout, reply, sizeof(reply));
+    if (g_cancel) return luaL_error(L, "đã dừng");
     lua_pushboolean(L, rc == 0);
     lua_pushstring(L, reply);
     return 2;
@@ -907,6 +915,8 @@ int lua_run_is_busy(void) {
     pthread_mutex_unlock(&g_mu);
     return b;
 }
+
+int lua_run_cancelled(void) { return g_cancel; }
 
 size_t lua_run_snapshot(int *busy, int *runid, long *elapsed, int *done,
                         char *out, size_t cap, size_t offset) {

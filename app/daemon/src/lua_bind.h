@@ -14,4 +14,7 @@ size_t lua_run_snapshot(int *busy, int *runid, long *elapsed, int *done,
 // Có đang chạy script (automation) không? Dùng để cổng capture chỉ giới hạn nhịp khi cần.
 int lua_run_is_busy(void);
 
+// Check xem user đã yêu cầu dừng chưa (g_cancel). Dùng trong các hàm chờ lâu (safari.load...).
+int lua_run_cancelled(void);
+
 #endif
