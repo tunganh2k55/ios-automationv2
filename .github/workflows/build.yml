@@ -129,16 +129,16 @@ jobs:
             out_merged/repo/ "$APT_USER@$APT_HOST:$APT_PATH/"
           echo "✓ Đã đẩy repo lên $APT_HOST:$APT_PATH"
 
-      # Đẩy .deb GỘP sang nhánh orphan 'ci-builds' để lấy về bằng git (repo private).
-      - name: Publish debs to ci-builds branch
+      # Đẩy repo Sileo (deb + Packages + Release) sang nhánh orphan 'ci-builds'.
+      - name: Publish repo to ci-builds branch
         run: |
-          cd out_merged
+          cd out_merged/repo
           git init -q
           git config user.email "ci@iosauto.local"
           git config user.name "iosauto-ci"
           git checkout -q --orphan ci-builds
-          git add *.deb
-          git commit -q -m "debs ${GITHUB_SHA}"
+          git add -A
+          git commit -q -m "repo ${GITHUB_SHA}"
           git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-builds
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
