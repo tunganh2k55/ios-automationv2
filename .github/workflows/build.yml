@@ -129,15 +129,15 @@ jobs:
             out_merged/repo/ "$APT_USER@$APT_HOST:$APT_PATH/"
           echo "✓ Đã đẩy repo lên $APT_HOST:$APT_PATH"
 
-      # Đẩy .deb sang nhánh orphan 'ci-builds' để lấy về bằng git (repo private).
+      # Đẩy .deb GỘP sang nhánh orphan 'ci-builds' để lấy về bằng git (repo private).
       - name: Publish debs to ci-builds branch
         run: |
-          cd out
+          cd out_merged
           git init -q
           git config user.email "ci@iosauto.local"
           git config user.name "iosauto-ci"
           git checkout -q --orphan ci-builds
-          git add -A
+          git add *.deb
           git commit -q -m "debs ${GITHUB_SHA}"
           git push -f "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ci-builds
         env:
