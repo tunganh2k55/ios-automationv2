@@ -27,7 +27,12 @@ static const char *mime_for(const char *path) {
     if (!strcmp(dot, ".css"))  return "text/css; charset=utf-8";
     if (!strcmp(dot, ".json")) return "application/json";
     if (!strcmp(dot, ".png"))  return "image/png";
+    if (!strcmp(dot, ".ico"))  return "image/x-icon";
     if (!strcmp(dot, ".svg"))  return "image/svg+xml";
+    if (!strcmp(dot, ".woff")) return "font/woff";
+    if (!strcmp(dot, ".ttf"))  return "font/ttf";
+    if (!strcmp(dot, ".mp3"))  return "audio/mpeg";
+    if (!strcmp(dot, ".oga"))  return "audio/ogg";
     return "application/octet-stream";
 }
 
@@ -63,11 +68,11 @@ static void reply(int fd, int status, const char *ctype, const char *body, size_
     if (len) send_all(fd, body, len);
 }
 
-// Chống path traversal: chỉ cho tên file phẳng, không "..".
+// Chống path traversal: không cho ".." trong path.
 static void serve_static(int fd, const char *path) {
     if (!g_web_dir[0]) { reply(fd, 404, "text/plain", "no web dir", 10); return; }
     const char *rel = (!strcmp(path, "/") ) ? "index.html" : path + 1;
-    if (strstr(rel, "..") || rel[0] == '/') { reply(fd, 400, "text/plain", "bad path", 8); return; }
+    if (strstr(rel, "..")) { reply(fd, 400, "text/plain", "bad path", 8); return; }
 
     char full[1024];
     snprintf(full, sizeof(full), "%s/%s", g_web_dir, rel);

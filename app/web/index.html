@@ -112,8 +112,12 @@
           </div>
         </div>
         <div class="phone-screen" id="screen">
-          <img id="shot" alt="màn hình" draggable="false">
+          <canvas id="videoCanvas" width="375" height="812"></canvas>
           <div class="noimg" id="noimg"><span>Bấm <b>View Màn</b> ở trên<br>để xem màn hình iPhone</span></div>
+          <div class="video-stats" id="videoStats">
+            <span>FPS: <b id="vFps">0</b></span>
+            <span>KB/s: <b id="vKbps">0</b></span>
+          </div>
           <div class="crosshair" id="crosshair" hidden></div>
           <div class="swipe-line" id="swipeLine" hidden></div>
         </div>

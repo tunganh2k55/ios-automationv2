@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en" class="noVNC_connected">
+<head>
+    <title>iOS Remote — noVNC</title>
+    <link rel="icon" type="image/x-icon" href="app/images/icons/novnc.ico">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="stylesheet" href="app/styles/base.css">
+    <style>
+        :root { --status-bg: rgba(128,128,128,0.9); }
+        body { background-color: #313131; }
+
+        /* Simplified control bar */
+        #noVNC_control_bar { left: 0; }
+        #noVNC_control_bar.noVNC_open { left: 0; }
+
+        /* Stats bar */
+        #stats_bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0,0,0,0.7);
+            color: #aaa;
+            font: 12px monospace;
+            padding: 6px 12px;
+            display: flex;
+            gap: 16px;
+            z-index: 100;
+        }
+        #stats_bar span { color: #4caf82; }
+
+        /* Screen container */
+        #screen_container {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        #screen {
+            max-width: 100%;
+            max-height: 100%;
+            background: #000;
+            border-radius: 8px;
+            touch-action: none;
+            cursor: crosshair;
+            box-shadow: 0 8px 40px rgba(0,0,0,0.5);
+        }
+
+        /* Status overlay */
+        #status_overlay {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            color: #fff;
+            padding: 20px 40px;
+            border-radius: 10px;
+            font-size: 16px;
+            z-index: 200;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        #status_overlay.hidden { display: none; }
+
+        /* Spinner */
+        .spinner {
+            width: 20px; height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Control bar - simplified */
+        #ctrl_bar {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            display: flex;
+            gap: 8px;
+            z-index: 100;
+        }
+        #ctrl_bar button {
+            background: rgba(110, 132, 163, 0.9);
+            border: 1px solid rgba(255,255,255,0.2);
+            border-radius: 8px;
+            color: #fff;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        #ctrl_bar button:hover { background: rgba(130, 152, 183, 0.95); }
+        #ctrl_bar button svg { width: 18px; height: 18px; fill: currentColor; }
+
+        /* Keyboard input (hidden) */
+        #keyboard_input {
+            position: absolute;
+            left: -9999px;
+            opacity: 0;
+        }
+
+        /* WebCodecs warning */
+        #webcodecs_warning {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(200,55,55,0.95);
+            color: #fff;
+            padding: 20px 30px;
+            border-radius: 10px;
+            max-width: 90vw;
+            text-align: center;
+            z-index: 300;
+        }
+        #webcodecs_warning.hidden { display: none; }
+        #webcodecs_warning code {
+            display: block;
+            margin: 10px 0;
+            padding: 8px;
+            background: rgba(0,0,0,0.3);
+            border-radius: 4px;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <!-- Status overlay -->
+    <div id="status_overlay">
+        <div class="spinner"></div>
+        <span id="status_text">Connecting...</span>
+    </div>
+
+    <!-- WebCodecs warning -->
+    <div id="webcodecs_warning" class="hidden"></div>
+
+    <!-- Control bar -->
+    <div id="ctrl_bar">
+        <button id="btn_keyboard" title="Show Keyboard">
+            <svg viewBox="0 0 24 24"><path d="M20 5H4c-1.1 0-1.99.9-1.99 2L2 17c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm-9 3h2v2h-2V8zm0 3h2v2h-2v-2zM8 8h2v2H8V8zm0 3h2v2H8v-2zm-1 2H5v-2h2v2zm0-3H5V8h2v2zm9 7H8v-2h8v2zm0-4h-2v-2h2v2zm0-3h-2V8h2v2zm3 3h-2v-2h2v2zm0-3h-2V8h2v2z"/></svg>
+        </button>
+        <button id="btn_home" title="Home Button">
+            <svg viewBox="0 0 24 24"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+        </button>
+        <button id="btn_fullscreen" title="Fullscreen">
+            <svg viewBox="0 0 24 24"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+        </button>
+    </div>
+
+    <!-- Screen container -->
+    <div id="screen_container">
+        <canvas id="screen" width="375" height="812"></canvas>
+    </div>
+
+    <!-- Stats bar -->
+    <div id="stats_bar">
+        <div>FPS: <span id="fps">0</span></div>
+        <div>Frames: <span id="frames">0</span></div>
+        <div>Res: <span id="res">--</span></div>
+        <div>KB/s: <span id="kbps">0</span></div>
+    </div>
+
+    <!-- Hidden keyboard input -->
+    <input type="text" id="keyboard_input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
+
+<script>
+const $ = id => document.getElementById(id);
+const cv = $('screen');
+const ctx = cv.getContext('2d');
+
+let decoder = null, configured = false;
+let frameCount = 0, bytes = 0, lastT = performance.now(), fpsCount = 0;
+let devW = 375, devH = 812;
+
+// Check WebCodecs support
+function checkWebCodecs() {
+    if (!('VideoDecoder' in window)) {
+        const warn = $('webcodecs_warning');
+        warn.classList.remove('hidden');
+        if (!window.isSecureContext) {
+            warn.innerHTML = `
+                <b>WebCodecs blocked (insecure context)</b>
+                <p>Open Chrome flags:</p>
+                <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>
+                <p>Add: <code>${location.origin}</code></p>
+                <p>Enable, Relaunch, then reload this page.</p>
+            `;
+        } else {
+            warn.innerHTML = '<b>Browser does not support WebCodecs</b><p>Use Chrome/Edge 94+</p>';
+        }
+        return false;
+    }
+    return true;
+}
+
+// Get device screen size for coordinate normalization
+fetch('/api/status').then(r => r.json()).then(d => {
+    if (d && d.screen) { devW = d.screen.w; devH = d.screen.h; }
+}).catch(() => {});
+
+// H.264 codec string from SPS NAL
+function codecFromAU(u8) {
+    const hex2 = n => n.toString(16).padStart(2, '0');
+    for (let i = 0; i + 4 < u8.length; i++) {
+        if (u8[i] === 0 && u8[i+1] === 0 && ((u8[i+2] === 1) || (u8[i+2] === 0 && u8[i+3] === 1))) {
+            const p = u8[i+2] === 1 ? i + 3 : i + 4;
+            if ((u8[p] & 0x1f) === 7 && p + 3 < u8.length)
+                return 'avc1.' + hex2(u8[p+1]) + hex2(u8[p+2]) + hex2(u8[p+3]);
+        }
+    }
+    return 'avc1.42e01f';
+}
+
+function setupDecoder(codec) {
+    decoder = new VideoDecoder({
+        output: frame => {
+            if (cv.width !== frame.displayWidth || cv.height !== frame.displayHeight) {
+                cv.width = frame.displayWidth;
+                cv.height = frame.displayHeight;
+                $('res').textContent = frame.displayWidth + '×' + frame.displayHeight;
+            }
+            ctx.drawImage(frame, 0, 0, cv.width, cv.height);
+            frame.close();
+            frameCount++;
+            fpsCount++;
+            $('frames').textContent = frameCount;
+            $('status_overlay').classList.add('hidden');
+        },
+        error: e => { setStatus('Decoder error: ' + e.message); }
+    });
+    decoder.configure({ codec, optimizeForLatency: true });
+    configured = true;
+    setStatus('Playing (' + codec + ')');
+    setTimeout(() => $('status_overlay').classList.add('hidden'), 500);
+}
+
+let tsCounter = 0;
+function connect() {
+    const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws/video');
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => setStatus('Connected, waiting for keyframe...');
+    ws.onclose = () => {
+        setStatus('Disconnected, reconnecting...');
+        configured = false;
+        if (decoder) { try { decoder.close(); } catch(e) {} }
+        decoder = null;
+        setTimeout(connect, 1000);
+    };
+    ws.onerror = () => setStatus('WebSocket error');
+
+    ws.onmessage = ev => {
+        const buf = new Uint8Array(ev.data);
+        bytes += buf.length;
+        const key = buf[0] & 1;
+        const au = buf.subarray(1);
+
+        if (!configured) {
+            if (!key) return;
+            try { setupDecoder(codecFromAU(au)); }
+            catch(e) { setStatus('Configure error: ' + e.message); return; }
+        }
+
+        if (decoder && decoder.state === 'configured') {
+            try {
+                decoder.decode(new EncodedVideoChunk({
+                    type: key ? 'key' : 'delta',
+                    timestamp: tsCounter++,
+                    data: au
+                }));
+            } catch(e) { /* skip bad frame */ }
+        }
+    };
+}
+
+function setStatus(text) {
+    $('status_text').textContent = text;
+    $('status_overlay').classList.remove('hidden');
+}
+
+// Stats update
+setInterval(() => {
+    const now = performance.now();
+    const dt = (now - lastT) / 1000;
+    $('fps').textContent = Math.round(fpsCount / dt);
+    $('kbps').textContent = Math.round(bytes / 1024 / dt);
+    fpsCount = 0;
+    bytes = 0;
+    lastT = now;
+}, 1000);
+
+// Touch/pointer input
+function norm(ev) {
+    const r = cv.getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+    const y = Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height));
+    return { x: Math.round(x * devW), y: Math.round(y * devH) };
+}
+
+let downPos = null;
+cv.addEventListener('pointerdown', ev => {
+    downPos = norm(ev);
+    cv.setPointerCapture(ev.pointerId);
+});
+
+cv.addEventListener('pointerup', ev => {
+    if (!downPos) return;
+    const up = norm(ev);
+    const dist = Math.hypot(up.x - downPos.x, up.y - downPos.y);
+
+    if (dist < 10) {
+        fetch('/api/tap', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ x: up.x, y: up.y })
+        });
+    } else {
+        fetch('/api/swipe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                x1: downPos.x, y1: downPos.y,
+                x2: up.x, y2: up.y,
+                duration: 0.25
+            })
+        });
+    }
+    downPos = null;
+});
+
+// Keyboard
+const kbInput = $('keyboard_input');
+$('btn_keyboard').onclick = () => {
+    kbInput.focus();
+    kbInput.click();
+};
+
+kbInput.addEventListener('input', ev => {
+    const text = ev.target.value;
+    if (text) {
+        fetch('/api/type', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        ev.target.value = '';
+    }
+});
+
+window.addEventListener('keydown', ev => {
+    if (ev.target === kbInput) return;
+    if (ev.key === 'Escape') return;
+    if (ev.key.length === 1 || ev.key === ' ') {
+        fetch('/api/type', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: ev.key })
+        });
+    }
+});
+
+// Home button
+$('btn_home').onclick = () => {
+    fetch('/api/home', { method: 'POST' });
+};
+
+// Fullscreen
+$('btn_fullscreen').onclick = () => {
+    if (cv.requestFullscreen) cv.requestFullscreen();
+    else if (cv.webkitRequestFullscreen) cv.webkitRequestFullscreen();
+};
+
+// Start
+if (checkWebCodecs()) {
+    connect();
+}
+</script>
+</body>
+</html>

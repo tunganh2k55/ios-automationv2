@@ -12,32 +12,121 @@ const api = async (path, body) => {
   return r.json();
 };
 
-// ---- Ảnh màn hình (STREAM MJPEG) ----
-// Một kết nối mở sẵn: daemon đẩy khung liên tục, <img> render như video.
-// Không còn poll từng ảnh (bỏ overhead bắt tay HTTP + lịch JS mỗi khung).
-const shot = $("#shot");
+// ---- Video stream (WebSocket H.264 + WebCodecs) ----
+// Kết nối /ws/video, nhận annexb NAL → decode bằng VideoDecoder → vẽ lên canvas.
+const videoCanvas = $("#videoCanvas");
+const videoCtx = videoCanvas.getContext("2d");
 const noimg = $("#noimg");
-const STREAM_URL = "/api/stream";
+const vFps = $("#vFps");
+const vKbps = $("#vKbps");
+
 let streamOn = false;
+let videoWS = null;
+let decoder = null;
+let configured = false;
+let frameCount = 0, bytes = 0, fpsCount = 0, lastStatT = performance.now();
+let tsCounter = 0;
+
+// Tìm SPS (NAL type 7) trong access unit annexb → dựng codec string avc1.PPCCLL.
+function codecFromAU(u8) {
+  const hex2 = n => n.toString(16).padStart(2, "0");
+  for (let i = 0; i + 4 < u8.length; i++) {
+    if (u8[i] === 0 && u8[i+1] === 0 && ((u8[i+2] === 1) || (u8[i+2] === 0 && u8[i+3] === 1))) {
+      const p = u8[i+2] === 1 ? i + 3 : i + 4;
+      if ((u8[p] & 0x1f) === 7 && p + 3 < u8.length)
+        return "avc1." + hex2(u8[p+1]) + hex2(u8[p+2]) + hex2(u8[p+3]);
+    }
+  }
+  return "avc1.42e01f";
+}
+
+function setupDecoder(codec) {
+  decoder = new VideoDecoder({
+    output: frame => {
+      if (videoCanvas.width !== frame.displayWidth || videoCanvas.height !== frame.displayHeight) {
+        videoCanvas.width = frame.displayWidth;
+        videoCanvas.height = frame.displayHeight;
+      }
+      videoCtx.drawImage(frame, 0, 0, videoCanvas.width, videoCanvas.height);
+      frame.close();
+      frameCount++;
+      fpsCount++;
+      noimg.style.display = "none";
+    },
+    error: e => { console.error("VideoDecoder error:", e); }
+  });
+  decoder.configure({ codec, optimizeForLatency: true });
+  configured = true;
+}
 
 function startStream() {
   if (streamOn) return;
-  streamOn = true;
-  shot.onload = () => { shot.style.display = "block"; noimg.style.display = "none"; };
-  shot.onerror = () => {
-    if (!streamOn) return;
+  if (!("VideoDecoder" in window)) {
+    noimg.innerHTML = "<span><b>WebCodecs không khả dụng</b><br>Dùng Chrome/Edge 94+<br>hoặc bật flag secure-origin</span>";
     noimg.style.display = "flex";
-    setTimeout(() => { if (streamOn) shot.src = STREAM_URL + "?t=" + Date.now(); }, 800);
+    return;
+  }
+  streamOn = true;
+  noimg.innerHTML = "<span>Đang kết nối video...</span>";
+
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  videoWS = new WebSocket(proto + "//" + location.host + "/ws/video");
+  videoWS.binaryType = "arraybuffer";
+
+  videoWS.onopen = () => { noimg.innerHTML = "<span>Chờ keyframe...</span>"; };
+  videoWS.onclose = () => {
+    configured = false;
+    if (decoder) { try { decoder.close(); } catch(e) {} }
+    decoder = null;
+    if (streamOn) setTimeout(startStream, 1000);
   };
-  shot.src = STREAM_URL + "?t=" + Date.now();
+  videoWS.onerror = () => { noimg.innerHTML = "<span>Lỗi kết nối video</span>"; noimg.style.display = "flex"; };
+
+  videoWS.onmessage = ev => {
+    const buf = new Uint8Array(ev.data);
+    bytes += buf.length;
+    const key = buf[0] & 1;
+    const au = buf.subarray(1);
+
+    if (!configured) {
+      if (!key) return;
+      try { setupDecoder(codecFromAU(au)); }
+      catch(e) { noimg.innerHTML = "<span>Lỗi codec: " + e.message + "</span>"; return; }
+    }
+
+    if (decoder && decoder.state === "configured") {
+      try {
+        decoder.decode(new EncodedVideoChunk({
+          type: key ? "key" : "delta",
+          timestamp: tsCounter++,
+          data: au
+        }));
+      } catch(e) { /* skip bad frame */ }
+    }
+  };
 }
+
 function stopStream() {
   streamOn = false;
-  shot.src = "";               // đóng kết nối MJPEG
-  shot.style.display = "none";
+  if (videoWS) { try { videoWS.close(); } catch(e) {} videoWS = null; }
+  if (decoder) { try { decoder.close(); } catch(e) {} decoder = null; }
+  configured = false;
+  noimg.innerHTML = "<span>Bấm <b>View Màn</b> ở trên<br>để xem màn hình iPhone</span>";
   noimg.style.display = "flex";
 }
-// Stream tự cập nhật → refresh thủ công không cần nữa (giữ hàm để chỗ khác gọi khỏi lỗi).
+
+// Cập nhật stats mỗi giây
+setInterval(() => {
+  const now = performance.now();
+  const dt = (now - lastStatT) / 1000;
+  if (vFps) vFps.textContent = Math.round(fpsCount / dt);
+  if (vKbps) vKbps.textContent = Math.round(bytes / 1024 / dt);
+  fpsCount = 0;
+  bytes = 0;
+  lastStatT = now;
+}, 1000);
+
+// Giữ hàm refreshShot để các chỗ khác gọi không lỗi (không cần làm gì).
 function refreshShot() {}
 
 // Nút View Màn / Tắt View: người dùng chủ động bật/tắt xem màn. Tab bị ẩn thì tạm dừng.
@@ -88,15 +177,15 @@ const coords = $("#coords");
 let dragStart = null;
 
 function toPoint(ev) {
-  const r = (shot.style.display !== "none" ? shot : screen).getBoundingClientRect();
+  const r = screen.getBoundingClientRect();
   const px = Math.max(0, Math.min(ev.clientX - r.left, r.width));
   const py = Math.max(0, Math.min(ev.clientY - r.top, r.height));
   return {
     x: Math.round((px / r.width) * LOGICAL.w),
     y: Math.round((py / r.height) * LOGICAL.h),
     // px/py tương đối so với khung screen (để vẽ overlay)
-    ox: ev.clientX - screen.getBoundingClientRect().left,
-    oy: ev.clientY - screen.getBoundingClientRect().top,
+    ox: px,
+    oy: py,
   };
 }
 function resetDrag() { dragStart = null; swipeLine.hidden = true; }
