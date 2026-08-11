@@ -8,6 +8,33 @@ let selPlan: string | null = null;
 let poll = 0, cd = 0, ttlMs = 15 * 60 * 1000;
 let payActivated = false; // user có nhập serial khi mua? (để biết đã tính hạn hay chưa)
 
+// Đếm số serial (mỗi dòng không trống = 1 serial)
+function countSerials(): number {
+  const val = ($('#mid') as HTMLTextAreaElement).value;
+  const lines = val.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  return Math.max(1, lines.length); // tối thiểu 1 máy
+}
+
+// Cập nhật hiển thị giá dựa trên số serial
+function updatePriceCalc() {
+  const calcEl = $('#priceCalc');
+  if (!selTool || !selPlan) { calcEl.textContent = ''; return; }
+  const plan = selTool.plans.find(p => p.id === selPlan);
+  if (!plan) { calcEl.textContent = ''; return; }
+
+  const qty = countSerials();
+  const total = plan.price * qty;
+  const midVal = ($('#mid') as HTMLTextAreaElement).value.trim();
+
+  if (midVal.length === 0) {
+    calcEl.innerHTML = `<b>Tổng: ${fmtVND(plan.price)}</b> (1 máy)`;
+  } else if (qty === 1) {
+    calcEl.innerHTML = `<b>Tổng: ${fmtVND(plan.price)}</b> (1 máy)`;
+  } else {
+    calcEl.innerHTML = `<b>Tổng: ${fmtVND(total)}</b> (${qty} máy × ${fmtVND(plan.price)})`;
+  }
+}
+
 (async function () {
   const user = await ensureAuth();
   if (!user) return;
@@ -16,6 +43,8 @@ let payActivated = false; // user có nhập serial khi mua? (để biết đã 
   ($('#pdClose') as HTMLButtonElement).onclick = closeDrawer;
   ($('#drawerBack') as HTMLElement).onclick = closeDrawer;
   ($('#payBtn') as HTMLButtonElement).onclick = pay;
+  // Cập nhật giá khi nhập serial
+  ($('#mid') as HTMLTextAreaElement).oninput = updatePriceCalc;
   loadTools();
 })();
 
@@ -69,6 +98,7 @@ function selectTool(id: string) {
       $$('.plan', plansBox).forEach((x) => x.classList.remove('sel'));
       pe.classList.add('sel');
       ($('#payBtn') as HTMLButtonElement).disabled = false;
+      updatePriceCalc();
     };
     plansBox.appendChild(pe);
   });
@@ -88,7 +118,7 @@ async function pay() {
   try {
     const r = await api('/api/orders', { method: 'POST',
       body: { toolId: selTool.id, plan: selPlan, machineId: midVal, note: noteVal } });
-    if (r.status === 'paid') { showPaidDrawer(r.code, r.key, r.expiresAt); return; }  // gói miễn phí
+    if (r.status === 'paid') { showPaidDrawer(r.code, r.key, r.expiresAt, r.keys); return; }  // gói miễn phí
     showPendingDrawer(r);
   } catch (e) { ($('#buyErr')).textContent = (e as Error).message; } finally { btn.disabled = false; }
 }
@@ -109,10 +139,12 @@ function stopTimers() { clearInterval(poll); clearInterval(cd); }
 function payRows(r: any): string {
   const row = (k: string, v: string, mono = false) =>
     `<div class="kv"><span class="k">${k}</span><span class="v${mono ? ' mono' : ''}">${esc(v)}</span></div>`;
+  const qty = r.quantity || 1;
+  const qtyNote = qty > 1 ? ` (${qty} máy)` : '';
   return row('Ngân hàng', r.bank?.bankId || '') +
     row('Số tài khoản', r.bank?.account || '', true) +
     (r.bank?.accountName ? row('Chủ TK', r.bank.accountName) : '') +
-    row('Số tiền', fmtVND(r.amount), true) +
+    row('Số tiền', fmtVND(r.amount) + qtyNote, true) +
     row('Nội dung CK', r.transferContent, true);
 }
 
@@ -150,7 +182,7 @@ function startPoll(code: string) {
   const tick = async () => {
     try {
       const s = await api('/api/orders/' + encodeURIComponent(code));
-      if (s.status === 'paid' && s.key) { stopTimers(); showPaidDrawer(code, s.key, s.expiresAt); }
+      if (s.status === 'paid' && s.key) { stopTimers(); showPaidDrawer(code, s.key, s.expiresAt, s.keys); }
       else if (s.status === 'expired' || s.status === 'canceled') { stopTimers(); onExpired(); }
     } catch { /* mạng chập chờn — thử lại lần sau */ }
   };
@@ -163,22 +195,27 @@ function onExpired() {
   $('#pdStatus').innerHTML = '<span style="color:var(--bad)">Đơn đã hết hạn (quá 15 phút). Hãy tạo đơn mới.</span>';
 }
 
-function showPaidDrawer(code: string, key: string, expiresAt?: string | null) {
+function showPaidDrawer(code: string, key: string, expiresAt?: string | null, keys?: string[]) {
   stopTimers();
   $('#pdCode').textContent = code;
   $('#pdPending').setAttribute('hidden', '');
   const res = $('#pdResult');
   res.removeAttribute('hidden');
+
+  const allKeys = keys && keys.length > 0 ? keys : [key];
+  const keysHtml = allKeys.map(k => `<div class="keybox">${esc(k)}</div>`).join('');
+  const keyLabel = allKeys.length > 1 ? `${allKeys.length} License keys của bạn` : 'License key của bạn';
+
   res.innerHTML = `
     <div class="pay-ok">✓ Thanh toán thành công</div>
-    <div class="pay-ok-l">License key của bạn</div>
-    <div class="keybox" id="pdKey">${esc(key)}</div>
+    <div class="pay-ok-l">${keyLabel}</div>
+    ${keysHtml}
     <div class="msg exp">Hạn: ${expiresAt ? fmtDate(expiresAt) : (payActivated ? 'Vĩnh viễn' : 'Tính từ khi bạn kích hoạt key')}</div>
-    <button class="mini" id="pdCopy">Sao chép key</button>
+    <button class="mini" id="pdCopy">Sao chép ${allKeys.length > 1 ? 'tất cả keys' : 'key'}</button>
     <a class="linkbtn" href="/license" style="display:inline-block;margin-top:12px">Tới License của tôi →</a>`;
   ($('#pdCopy') as HTMLButtonElement).onclick = async () => {
-    try { await navigator.clipboard.writeText(key); toast('Đã sao chép key', 'ok'); } catch { toast('Không sao chép được', 'bad'); }
+    try { await navigator.clipboard.writeText(allKeys.join('\n')); toast('Đã sao chép ' + allKeys.length + ' key(s)', 'ok'); } catch { toast('Không sao chép được', 'bad'); }
   };
   openDrawer();
-  toast('Đã cấp license thành công', 'ok');
+  toast(`Đã cấp ${allKeys.length} license thành công`, 'ok');
 }

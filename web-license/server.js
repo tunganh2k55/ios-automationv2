@@ -182,6 +182,32 @@ async function issueLicenseForOrder(order) {
   return lic;
 }
 
+// Cấp NHIỀU license cho đơn có nhiều serial. Mỗi serial = 1 license riêng.
+async function issueLicensesForOrder(order) {
+  const tool = (order.toolId && await tools.byId(order.toolId)) || await tools.bySlug(order.toolSlug);
+  const machineIds = order.machineIds ? JSON.parse(order.machineIds) : [];
+  const quantity = order.quantity || Math.max(1, machineIds.length);
+  const keys = [];
+
+  for (let i = 0; i < quantity; i++) {
+    const machineId = machineIds[i] || null;
+    const lic = {
+      key: genKey(order.toolSlug),
+      toolId: tool ? tool.id : order.toolId, toolSlug: order.toolSlug, toolName: order.toolName,
+      userId: order.userId, userEmail: order.userEmail,
+      machineId,
+      plan: order.plan,
+      createdAt: new Date().toISOString(),
+      expiresAt: machineId ? (expiryFromPlan(tool ? tool.plans : [], order.plan) ?? null) : null,
+      status: 'active', paid: order.provider || 'web2m', note: 'order ' + order.code,
+      customerNote: order.customerNote || '',
+    };
+    await licenses.insert(lic);
+    keys.push(lic.key);
+  }
+  return keys;
+}
+
 // Patch khi kích hoạt lần đầu: gán machineId và BẮT ĐẦU tính hạn (now + số ngày gói).
 //   • Chỉ tính hạn ở lần kích hoạt ĐẦU TIÊN (khi lic chưa có machineId).
 //   • Gói vĩnh viễn (days = null) → expiresAt vẫn null.
@@ -462,26 +488,36 @@ app.post('/api/purchase', requireAuth, wrap(async (req, res) => {
 }));
 
 // Tạo ĐƠN mua — trả QR chuyển khoản + mã nội dung. web2m webhook xác nhận → cấp key.
+// Hỗ trợ nhiều serial: mỗi serial = 1 máy, tính tiền riêng (quantity = số serial).
 app.post('/api/orders', requireAuth, wrap(async (req, res) => {
   const tool = await tools.byId(req.body.toolId);
   if (!tool || !tool.active) return res.status(400).json({ ok: false, msg: 'Tool không hợp lệ' });
   const plan = planById(tool.plans, String(req.body.plan || ''));
   if (!plan) return res.status(400).json({ ok: false, msg: 'Gói không hợp lệ' });
-  const machineId = normalizeMachineId(req.body.machineId); // tuỳ chọn
-  const customerNote = String(req.body.note || '').slice(0, 500); // chú thích (tuỳ chọn)
-  const amount = Math.max(0, plan.price | 0);
+
+  // Hỗ trợ nhiều serial: mỗi dòng = 1 serial
+  const machineIdRaw = String(req.body.machineId || '');
+  const machineIds = machineIdRaw.split(/\r?\n/).map(s => normalizeMachineId(s)).filter(s => s.length > 0);
+  const quantity = Math.max(1, machineIds.length); // tối thiểu 1 máy
+  const machineId = machineIds[0] || null; // serial đầu tiên (dùng cho license đầu)
+  const machineIdsJson = machineIds.length > 1 ? JSON.stringify(machineIds) : null; // lưu tất cả serial nếu > 1
+
+  const customerNote = String(req.body.note || '').slice(0, 500);
+  const unitPrice = Math.max(0, plan.price | 0);
+  const amount = unitPrice * quantity; // tổng tiền = giá × số máy
 
   // Gói miễn phí (giá 0) → cấp key ngay, không cần thanh toán.
-  if (amount === 0) {
+  if (unitPrice === 0) {
     const order = await orders.create({
       code: genOrderCode(), toolId: tool.id, toolSlug: tool.slug, toolName: tool.name,
       userId: req.user.id, userEmail: req.user.email, plan: plan.id, amount: 0,
-      machineId: machineId || null, status: 'pending', provider: 'free', customerNote,
+      machineId: machineId || null, machineIds: machineIdsJson, quantity,
+      status: 'pending', provider: 'free', customerNote,
       expiresAt: new Date(Date.now() + ORDER_TTL_MS).toISOString(),
     });
-    const lic = await issueLicenseForOrder(order);
-    await orders.update(order.code, { status: 'paid', licenseKey: lic.key, paidAt: new Date().toISOString() });
-    return res.json({ ok: true, free: true, status: 'paid', code: order.code, key: lic.key, expiresAt: lic.expiresAt });
+    const keys = await issueLicensesForOrder(order);
+    await orders.update(order.code, { status: 'paid', licenseKey: keys[0], licenseKeys: JSON.stringify(keys), paidAt: new Date().toISOString() });
+    return res.json({ ok: true, free: true, status: 'paid', code: order.code, key: keys[0], keys, quantity, expiresAt: null });
   }
 
   if (!bankConfigured()) return res.status(503).json({ ok: false, msg: 'Cổng thanh toán chưa được cấu hình. Liên hệ quản trị.' });
@@ -489,12 +525,13 @@ app.post('/api/orders', requireAuth, wrap(async (req, res) => {
   const order = await orders.create({
     code: genOrderCode(), toolId: tool.id, toolSlug: tool.slug, toolName: tool.name,
     userId: req.user.id, userEmail: req.user.email, plan: plan.id, amount,
-    machineId: machineId || null, status: 'pending', provider: 'web2m', customerNote,
+    machineId: machineId || null, machineIds: machineIdsJson, quantity,
+    status: 'pending', provider: 'web2m', customerNote,
     expiresAt: new Date(Date.now() + ORDER_TTL_MS).toISOString(),
   });
   const b = bankInfo();
   res.json({
-    ok: true, status: 'pending', code: order.code, amount, plan: plan.id,
+    ok: true, status: 'pending', code: order.code, amount, quantity, plan: plan.id,
     expiresAt: order.expiresAt,
     qrUrl: buildQrUrl(amount, order.code),
     bank: { bankId: b.bankId, account: b.account, accountName: b.accountName },
@@ -517,7 +554,11 @@ app.get('/api/orders/:code', requireAuth, wrap(async (req, res) => {
   const order = await orders.byCode(normalizeOrderCode(req.params.code));
   if (!order || order.userId !== req.user.id) return res.status(404).json({ ok: false, msg: 'Không tìm thấy đơn' });
   await expireIfStale(order); // quá giờ mà chưa thanh toán → hết hạn
-  res.json({ ok: true, status: order.status, key: order.licenseKey || null, amount: order.amount, plan: order.plan, expiresAt: order.expiresAt });
+  const keys = order.licenseKeys ? JSON.parse(order.licenseKeys) : (order.licenseKey ? [order.licenseKey] : []);
+  res.json({
+    ok: true, status: order.status, key: order.licenseKey || null, keys,
+    quantity: order.quantity || 1, amount: order.amount, plan: order.plan, expiresAt: order.expiresAt
+  });
 }));
 
 // Đơn của tôi. Quét & đánh dấu hết hạn các đơn pending quá giờ trước khi trả về.
@@ -550,13 +591,13 @@ app.post('/api/webhook/web2m', wrap(async (req, res) => {
       await expireIfStale(order);              // quá 15 phút → không xử lý nữa
       if (order.status !== 'pending') continue; // đã bị đánh dấu hết hạn ở trên
       if (tx.amount < order.amount) continue;  // chưa đủ tiền
-      const lic = await issueLicenseForOrder(order);
+      const keys = await issueLicensesForOrder(order);
       await orders.update(order.code, {
-        status: 'paid', licenseKey: lic.key, txRef: tx.ref || null,
-        paidAt: new Date().toISOString(), raw,
+        status: 'paid', licenseKey: keys[0], licenseKeys: JSON.stringify(keys),
+        txRef: tx.ref || null, paidAt: new Date().toISOString(), raw,
       });
       matched++;
-      console.log(`💰 Order ${order.code} PAID (${tx.amount}₫) → key ${lic.key}`);
+      console.log(`💰 Order ${order.code} PAID (${tx.amount}₫) → ${keys.length} key(s): ${keys.join(', ')}`);
       break; // 1 giao dịch khớp tối đa 1 đơn
     }
   }

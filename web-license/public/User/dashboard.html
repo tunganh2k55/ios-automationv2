@@ -40,8 +40,9 @@
       <div class="plan-panel">
         <div class="sub" id="planFor">Hãy chọn một license ở bước 1.</div>
         <div class="plans" id="plans"></div>
-        <label>Serial / Machine ID <span class="hint">(tuỳ chọn · gắn cố định 1 máy, không đổi được sau khi kích hoạt)</span></label>
-        <input id="mid" type="text" placeholder="VD: AB12CD34" autocapitalize="characters" autocomplete="off">
+        <label>Serial / Machine ID <span class="hint">(tuỳ chọn · mỗi dòng 1 serial, mỗi serial = 1 máy tính tiền)</span></label>
+        <textarea id="mid" rows="3" placeholder="VD:&#10;AB12CD34&#10;EF56GH78&#10;IJ90KL12" autocapitalize="characters" autocomplete="off"></textarea>
+        <div class="price-calc" id="priceCalc" style="margin:-8px 0 12px;font-size:14px;color:var(--muted)"></div>
         <label>Chú thích <span class="hint">(tuỳ chọn · ghi lại ghi chú của bạn, sẽ hiển thị ở trang License của tôi)</span></label>
         <textarea id="note" rows="2" maxlength="500" placeholder="VD: mua cho máy công ty, liên hệ Zalo 09xx…" autocomplete="off"></textarea>
         <button class="primary" id="payBtn" disabled>Thanh toán</button>
