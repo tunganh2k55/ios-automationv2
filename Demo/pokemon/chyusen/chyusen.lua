@@ -1,76 +1,89 @@
 -- ============================================================================
--- chyusen.lua — LẤY 1 dòng thông tin "chyusen" rồi UPLOAD kết quả.
+-- chyusen.lua — Vòng lặp VÔ HẠN login + ứng tuyển chyusen
 --
--- API (dự án imapicloud, host https://imapicloud.site — cùng key với reg-poke):
---   GET  /api/v1/chyusen/claim[?type=...]   -> { id, type, content, claimed_at, remaining }
---        Lấy 1 dòng CHƯA TỪNG lấy (one-time, đánh dấu claimed_at). Hết dòng -> HTTP 409.
---   GET  /api/v1/chyusen/code?id=<id>       -> { user, password, email_forward, app_password,
---        found, code, from, subject }. CHỈ ĐỌC (không claim) → gọi lại nhiều lần để POLL chờ mail.
---        code = passcode パスコード (mã xác thực bóc từ mail login). found:false/code null = mail chưa
---        tới, poll lại. Lỗi: 400 thiếu forward/app pass · 404 không thấy dòng · 502 sai app pass /
---        không nối được hộp thư. (Có thể chọn dòng bằng ?id / ?user=email / ?type.)
---   POST /api/v1/chyusen/result  body { id, result, status }  -> { ok, record }
---        Ghi kết quả vào ĐÚNG dòng đã claim (id lấy từ claim ở trên).
---   Header mọi request: x-api-key: <key>
+-- Flow mỗi lượt:
+--   (1) Đổi IP 4G (nếu use4g=1) → (2) Claim 1 dòng → (3) Clear Safari →
+--   (4) Login (email+password) → (5) Chờ passcode → (6) Poll code từ API →
+--   (7) Nhập passcode + xác thực → (8) Mở trang apply → (9) Ứng tuyển LIST items
+--   → (10) Upload kết quả
 --
--- LUỒNG mỗi lượt: (1) đổi IP 4G nếu use4g=1 → (2) lấy 1 dòng chyusen type=pokemon (content="email|
---   password") → (3) mở trang login lottery, GÕ email + mật khẩu (safari.type từng ký tự chống
---   anti-bot), bấm ログイン → (4) chờ trang パスコード入力 (ô #authCode) → (5) POLL /chyusen/code?id=<id>
---   lấy passcode → GÕ vào #authCode → bấm 認証する (#certify) → (6) chờ load → upload passcode vào
---   result (success). Không thấy trang passcode → thất bại. Bước nào hỏng → upload status "failed"
---   (tab Thất bại). safari.type cần daemon build có verb WEBTYPE.
+-- Logic dừng:
+--   - Chạy VÔ HẠN, không giới hạn số account
+--   - Khi hết acc (HTTP 409): chờ 5s rồi thử lại, đếm emptyRetryCount
+--   - Nếu có acc mới: RESET emptyRetryCount về 0 (tiếp tục vô hạn)
+--   - Nếu thử 100 lần liên tiếp mà vẫn hết acc: DỪNG HẲN
 --
--- Config: DÙNG CHUNG file với reg-poke.lua — config_reg_poke.txt (cùng apikey). CHỈ đọc đúng file
--- này trong thư mục scripts của iOSAuto; KHÔNG dò vị trí khác / không fallback (tránh đọc nhầm file cũ).
---   apikey=...   (bắt buộc)
---   use4g=0/1    (1 = đổi IP 4G trước mỗi lượt)
+-- Error handling ĐẦY ĐỦ cho mọi case:
+--   - Lỗi đọc config / thiếu apikey
+--   - Lỗi mạng (httpGet/httpPost timeout/fail)
+--   - HTTP 409 (hết dòng), 400/404/502 (lỗi API)
+--   - Content sai định dạng (không tách được email|password)
+--   - Lỗi Safari: clear fail, mở trang fail, gõ fail, click fail
+--   - Lỗi passcode: không thấy #authCode, poll code timeout, mail không tới
+--   - Lỗi apply item: mỗi bước (detail, radio, checkbox, popup, applyBtn)
+--   - Lỗi bất ngờ (pcall catch all)
+--   - User dừng script (ấn Dừng)
 -- ============================================================================
 
 local BASE = "https://imapicloud.site"
-
--- Path TUYỆT ĐỐI tới config trong scripts iOSAuto — cwd của engine Lua KHÔNG phải thư mục này nên
--- tên file trần io.open sẽ fail; phải dùng full path (giống reg-poke.lua). Dùng chung file với reg.
 local CONFIG_PATH = "/var/jb/usr/local/iosauto/scripts/config_reg_poke.txt"
 
+-- ========== CẤU HÌNH ==========
+local CHYUSEN_TYPE = "pokemon"            -- loại chyusen
+local LOGIN_URL    = "https://www.pokemoncenter-online.com/lottery/login.html"
+local APPLY_URL    = "https://www.pokemoncenter-online.com/lottery/apply.html"
+local LIST         = {2, 4, 6}            -- danh sách item cần ứng tuyển (1-indexed)
+
+-- Selectors
+local SEL_EMAIL    = "email"
+local SEL_PASSWORD = "password"
+local SEL_LOGINBTN = "a.loginBtn"
+
+-- 4G settings
+local C4G_OFF_SECONDS = 5
+local C4G_NET_WAIT    = 40
+local C4G_IP_MAX_TRY  = 3
+local C4G_READY_TRY   = 4
+local C4G_READY_WAIT  = 1.5
+
+-- Retry settings
+local MAX_EMPTY_RETRY = 100               -- khi hết acc, thử lại tối đa 100 lần rồi dừng
+local EMPTY_RETRY_GAP = 10                 -- chờ 5s giữa mỗi lần retry khi hết acc
+local MAX_ERROR_RETRY = 10                -- retry lỗi khác (network, server) tối đa 5 lần liên tiếp
+
+-- ========== HELPERS ==========
 local function trim(s) return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
 
--- Gieo hạt ngẫu nhiên 1 lần (nếu env có os.time) → humanPause khác nhau mỗi phiên. Không có os → bỏ.
 pcall(function() math.randomseed(os.time()) end)
 
--- humanPause: nghỉ NGẪU NHIÊN lo..hi giây (mặc định 0.6–1.6s) mô phỏng người thao tác — chèn GIỮA các
--- bước (load xong → gõ, gõ email → gõ mật khẩu, → bấm login) để tránh chuỗi hành động TỨC THÌ bị
--- anti-bot chấm là bot. Bổ sung cho jitter GIỮA từng phím trong safari.type (verb WEBTYPE ở daemon).
 local function humanPause(lo, hi)
     lo = lo or 0.6; hi = hi or 1.6
     sleep(lo + math.random() * (hi - lo))
 end
 
--- notify: vừa log vừa toast cùng 1 thông điệp (dur giây, mặc định 3).
 local function notify(msg, dur)
     log(msg)
     toast(msg, dur or 3)
 end
 
--- readConfig: đọc key=value trong config (bỏ dòng trống / bắt đầu bằng #). Trả bảng {key=value},
--- key hạ thường. Giá trị lấy nguyên phần sau dấu = / : (đã trim). Không mở được -> bảng rỗng.
 local function readConfig()
     local cfg = {}
     local f = io.open(CONFIG_PATH, "r")
-    if f then
-        for line in f:lines() do
-            local ln = trim(line)
-            if ln ~= "" and ln:sub(1, 1) ~= "#" then
-                local k, v = ln:match("^([%w%._%-]+)%s*[:=]%s*(.*)$")
-                if k then cfg[k:lower()] = trim(v) end
-            end
-        end
-        f:close()
+    if not f then
+        notify("ERROR: Không mở được config: " .. CONFIG_PATH, 4)
+        return cfg, "không mở được file config"
     end
-    return cfg
+    for line in f:lines() do
+        local ln = trim(line)
+        if ln ~= "" and ln:sub(1, 1) ~= "#" then
+            local k, v = ln:match("^([%w%._%-]+)%s*[:=]%s*(.*)$")
+            if k then cfg[k:lower()] = trim(v) end
+        end
+    end
+    f:close()
+    return cfg, nil
 end
 
--- readUse4g: đọc cờ "use4g" trong config_reg_poke.txt (do tool Electron ghi: use4g=0/1). BẬT khi giá
--- trị là 1/true/on/yes (không phân biệt hoa thường). Không có khoá / không đọc được → false (tắt).
 local function readUse4g()
     local f = io.open(CONFIG_PATH, "r")
     if not f then return false end
@@ -90,15 +103,7 @@ local function readUse4g()
     return on
 end
 
--- ===== Đổi IP 4G (tắt/bật sóng qua Airplane Mode) — port từ reg-poke.lua =====
-local C4G_OFF_SECONDS = 5   -- giữ ngắt sóng bao lâu mỗi lần (giây) — đủ để PDP rớt → nhà mạng cấp IP mới
-local C4G_NET_WAIT    = 40   -- chờ tối đa (giây) cho 4G lên lại + có IP công khai sau khi bật sóng
-local C4G_IP_MAX_TRY  = 3    -- số lần thử tắt/bật lại nếu IP CHƯA đổi (đôi khi nhà mạng cấp lại IP cũ)
-local C4G_READY_TRY   = 4    -- số lần thử BẬT airplane khi daemon báo "chưa sẵn sàng" (chưa có client)
-local C4G_READY_WAIT  = 1.5  -- nghỉ (giây) giữa mỗi lần thử để SpringBoard tweak kịp nối lại socket
-
--- getIpWait: lấy IP công khai, CÓ CHỜ mạng (poll getPublicIp mỗi 2s tới `timeout` giây). Trả IP
--- (chuỗi) hoặc nil nếu hết giờ vẫn chưa có mạng / daemon không có getPublicIp.
+-- ========== 4G CYCLE ==========
 local function getIpWait(timeout)
     if type(getPublicIp) ~= "function" then return nil end
     timeout = tonumber(timeout) or 30
@@ -111,53 +116,46 @@ local function getIpWait(timeout)
     return nil
 end
 
--- airplaneOn: BẬT airplane, CÓ chờ SpringBoard sẵn sàng. Lúc mới vào (máy vừa respring / màn khoá /
--- về home) daemon có thể CHƯA có client → setAirplane trả "chưa sẵn sàng" và chỉ ghi plist, KHÔNG cắt
--- sóng thật. Gặp đúng lỗi thiếu-client đó: wake() kéo SpringBoard active rồi thử lại (≤ C4G_READY_TRY).
--- Lỗi loại khác → trả ngay. Trả true nếu bật được; false + lỗi cuối nếu vẫn không có client.
 local function airplaneOn()
+    if type(setAirplane) ~= "function" then
+        return false, "daemon chưa hỗ trợ setAirplane"
+    end
     local ok, err
     for _ = 1, C4G_READY_TRY do
-        ok, err = setAirplane(true)                   -- BẬT airplane (ngắt sóng)
+        ok, err = setAirplane(true)
         if ok then return true end
         local e = tostring(err)
         if not e:find("chưa sẵn sàng", 1, true) and not e:find("chưa có app", 1, true) then
             return false, err
         end
-        wake()                                        -- kéo SpringBoard active → tweak nối lại daemon
+        wake()
         sleep(C4G_READY_WAIT)
     end
     return false, err
 end
 
--- holdAirplane: BẬT airplane → GIỮ `secs` giây → LUÔN bật lại sóng, KỂ CẢ khi người dùng ấn Dừng giữa
--- chừng (bọc pcall để sleep ném "đã dừng" không thoát TRƯỚC khi tắt airplane → tránh kẹt máy bay).
 local function holdAirplane(secs)
     local ok, err = airplaneOn()
     if not ok then return false, err end
     local held, herr = pcall(function() sleep(secs) end)
-    setAirplane(false)                                -- LUÔN bật lại sóng dù bị dừng giữa chừng
-    if not held then error(herr, 0) end               -- ném lại NGUYÊN lỗi (giữ "đã dừng") cho vòng ngoài
+    setAirplane(false)
+    if not held then error(herr, 0) end
     return true
 end
 
--- cycle4g: nếu config bật use4g → tắt/bật sóng để xin IP 4G mới, và XÁC MINH IP đã đổi (so IP
--- trước/sau); chưa đổi thì thử lại tối đa C4G_IP_MAX_TRY lần. Cần daemon có setAirplane; daemon cũ
--- không có → báo rồi bỏ qua. Ấn Dừng giữa chừng vẫn bật lại sóng an toàn.
 local function cycle4g()
-    if not readUse4g() then return end                 -- config tắt use4g → không đụng tới 4G
+    if not readUse4g() then return end
     if type(setAirplane) ~= "function" then
-        notify("use4g BẬT nhưng daemon chưa hỗ trợ setAirplane — bỏ qua đổi 4G", 3)
+        notify("use4g BẬT nhưng daemon chưa hỗ trợ setAirplane — bỏ qua", 3)
         return
     end
     local oldIp = getIpWait(C4G_NET_WAIT)
     notify("Đổi 4G: IP hiện tại " .. tostring(oldIp or "?"), 2)
     for attempt = 1, C4G_IP_MAX_TRY do
-        notify(string.format("Đổi 4G (lần %d/%d): ngắt sóng %ds rồi bật lại...",
-            attempt, C4G_IP_MAX_TRY, C4G_OFF_SECONDS), 2)
+        notify(string.format("Đổi 4G (lần %d/%d): ngắt sóng %ds...", attempt, C4G_IP_MAX_TRY, C4G_OFF_SECONDS), 2)
         local ok, err = holdAirplane(C4G_OFF_SECONDS)
         if not ok then
-            notify("Đổi 4G lỗi: " .. tostring(err) .. " — bỏ qua đổi 4G", 3)
+            notify("Đổi 4G lỗi: " .. tostring(err) .. " — bỏ qua", 3)
             return
         end
         notify("Đổi 4G: đã bật lại sóng, chờ mạng...", 2)
@@ -165,111 +163,222 @@ local function cycle4g()
         if not newIp then
             notify("Đổi 4G: mạng chưa lên lại sau " .. C4G_NET_WAIT .. "s", 3)
         elseif not oldIp or newIp ~= oldIp then
-            notify("Đổi 4G OK ✓ IP mới: " .. newIp, 3)
+            notify("Đổi 4G OK - IP mới: " .. newIp, 3)
             return
         else
-            notify(string.format("Đổi 4G: IP CHƯA đổi (vẫn %s)%s", newIp,
-                attempt < C4G_IP_MAX_TRY and " — thử lại" or ""), 3)
+            notify(string.format("Đổi 4G: IP chưa đổi (%s)%s", newIp, attempt < C4G_IP_MAX_TRY and " — thử lại" or ""), 3)
             oldIp = newIp
         end
     end
     notify("Đổi 4G: thử " .. C4G_IP_MAX_TRY .. " lần chưa đổi được IP — vẫn tiếp tục", 3)
 end
 
--- claimChyusen: GET /api/v1/chyusen/claim — lấy 1 dòng chyusen chưa dùng. `type` lọc loại (nil/""
--- = bất kỳ). Retry tối đa `tries` lần (mặc định 300), cách `gap` giây (mặc định 5) — chờ qua lỗi
--- mạng và cả 409 (bảng hết dòng -> đợi nạp thêm). Trả bảng { id, type, content, remaining } hoặc nil.
-local function claimChyusen(key, ctype, tries, gap)
-    tries = math.max(1, tonumber(tries) or 300)
-    gap = tonumber(gap) or 5
+-- ========== API FUNCTIONS ==========
+local function claimChyusen(key, ctype)
+    -- Kiểm tra key
+    if not key or key == "" then
+        return nil, "MISSING_KEY", "thiếu apikey"
+    end
+
     local url = BASE .. "/api/v1/chyusen/claim"
     if ctype and ctype ~= "" then url = url .. "?type=" .. ctype end
-    for attempt = 1, tries do
-        local body, st = httpGet(url, { ["x-api-key"] = key })
-        if not body then
-            notify(string.format("claimChyusen: lần %d/%d lỗi mạng %s", attempt, tries, tostring(st)), 2)
-        elseif st == 200 then
-            local d = jsonDecode(body) or {}
-            if d.id then
-                notify(string.format("claimChyusen: id=%s type=%s (còn lại %s)",
-                    tostring(d.id), tostring(d.type), tostring(d.remaining)), 3)
-                return d
-            end
-            notify("claimChyusen: HTTP 200 nhưng thiếu id: " .. tostring(body), 3)
-        elseif st == 409 then
-            notify(string.format("claimChyusen: lần %d/%d — đã hết dòng chyusen chưa lấy", attempt, tries), 2)
-        else
-            notify(string.format("claimChyusen: lần %d/%d HTTP %s %s", attempt, tries, tostring(st), tostring(body)), 3)
-        end
-        if attempt < tries then sleep(gap) end
+
+    local body, st = httpGet(url, { ["x-api-key"] = key })
+
+    -- Case 1: Lỗi mạng (body = nil)
+    if not body then
+        return nil, "NETWORK_ERROR", "lỗi mạng: " .. tostring(st)
     end
-    notify("claimChyusen: hết " .. tries .. " lần vẫn không lấy được dòng chyusen", 3)
-    return nil
+
+    -- Case 2: HTTP 200 OK
+    if st == 200 then
+        local d = jsonDecode(body)
+        if not d then
+            return nil, "INVALID_JSON", "không parse được JSON: " .. tostring(body):sub(1, 100)
+        end
+        if d.id then
+            notify(string.format("Claim OK: id=%s (còn %s)", tostring(d.id), tostring(d.remaining)), 3)
+            return d, "OK", nil
+        end
+        return nil, "INVALID_RESPONSE", "HTTP 200 nhưng thiếu id: " .. tostring(body):sub(1, 100)
+    end
+
+    -- Case 3: HTTP 409 = hết dòng
+    if st == 409 then
+        return nil, "EMPTY", "hết dòng chyusen chưa lấy"
+    end
+
+    -- Case 4: HTTP 400 = request sai
+    if st == 400 then
+        return nil, "BAD_REQUEST", "HTTP 400: " .. tostring(body):sub(1, 100)
+    end
+
+    -- Case 5: HTTP 401/403 = key sai hoặc hết hạn
+    if st == 401 or st == 403 then
+        return nil, "UNAUTHORIZED", "HTTP " .. st .. ": apikey sai hoặc hết hạn"
+    end
+
+    -- Case 6: HTTP 404 = endpoint không tồn tại
+    if st == 404 then
+        return nil, "NOT_FOUND", "HTTP 404: API endpoint không tồn tại"
+    end
+
+    -- Case 7: HTTP 429 = rate limit
+    if st == 429 then
+        return nil, "RATE_LIMIT", "HTTP 429: quá nhiều request, thử lại sau"
+    end
+
+    -- Case 8: HTTP 500/502/503/504 = server lỗi
+    if st >= 500 then
+        return nil, "SERVER_ERROR", "HTTP " .. st .. ": server lỗi"
+    end
+
+    -- Case 9: HTTP khác
+    return nil, "HTTP_ERROR", string.format("HTTP %s: %s", tostring(st), tostring(body):sub(1, 100))
 end
 
--- uploadResult: POST /api/v1/chyusen/result { id, result, status } — ghi kết quả cho đúng dòng đã
--- claim. `status` = "success" (mặc định) | "failed", lưu vào cột result_status (tab Kết Quả tách
--- Thành công/Thất bại theo cột này). Trả bảng record đã cập nhật (hoặc nil nếu lỗi mạng/HTTP).
--- id + result bắt buộc (API 400 nếu thiếu).
 local function uploadResult(key, id, result, status)
-    if not id or id == "" then notify("uploadResult: thiếu id", 3); return nil end
-    if not result or result == "" then notify("uploadResult: thiếu result", 3); return nil end
+    -- Case 1: Thiếu id
+    if not id or id == "" then
+        notify("uploadResult: thiếu id — bỏ qua", 2)
+        return nil, "MISSING_ID"
+    end
+
+    -- Case 2: Thiếu result
+    if not result then result = "unknown" end
+
     status = (status == "failed") and "failed" or "success"
+
     local payload = jsonEncode({ id = id, result = result, status = status })
+
+    -- Case 3: jsonEncode fail
+    if not payload then
+        notify("uploadResult: jsonEncode lỗi", 2)
+        return nil, "JSON_ENCODE_ERROR"
+    end
+
     local resp, st = httpPost(BASE .. "/api/v1/chyusen/result", payload,
         "application/json", { ["x-api-key"] = key })
-    if not resp then notify("uploadResult: lỗi mạng " .. tostring(st), 3); return nil end
-    local d = jsonDecode(resp) or {}
-    if (st == 200 or st == 201) and d.ok then
-        notify("uploadResult: đã lưu kết quả [" .. status .. "] cho id=" .. tostring(id), 3)
-        return d.record or d
+
+    -- Case 4: Lỗi mạng
+    if not resp then
+        notify("uploadResult: lỗi mạng " .. tostring(st), 3)
+        return nil, "NETWORK_ERROR"
     end
-    notify(string.format("uploadResult: HTTP %s %s", tostring(st), tostring(resp)), 3)
-    return nil
+
+    -- Case 5: Parse response
+    local d = jsonDecode(resp)
+    if not d then
+        notify("uploadResult: không parse được response: " .. tostring(resp):sub(1, 100), 3)
+        return nil, "INVALID_JSON"
+    end
+
+    -- Case 6: Success
+    if (st == 200 or st == 201) and d.ok then
+        notify("Upload [" .. status .. "] OK cho id=" .. tostring(id), 3)
+        return d.record or d, "OK"
+    end
+
+    -- Case 7: HTTP error
+    notify(string.format("uploadResult HTTP %s: %s", tostring(st), tostring(resp):sub(1, 100)), 3)
+    return nil, "HTTP_" .. tostring(st)
 end
 
--- getChyusenCode: GET /api/v1/chyusen/code?id=<id> — POLL passcode (code) bóc từ mail. CHỈ ĐỌC
--- (không claim) nên gọi lại nhiều lần chờ mail tới được. Trả code (chuỗi) khi found:true; hoặc
--- nil + lý do. Phân biệt 2 loại lỗi:
---   • HTTP 200 + found:false/code rỗng  → mail CHƯA tới → nghỉ `gap` giây rồi thử lại (≤ `tries` lần).
---   • 400 (thiếu forward/app pass) / 404 (không thấy dòng) → lỗi CỨNG, poll lại vô ích → DỪNG ngay.
---   • 502 / lỗi mạng khác → tạm thời (mất kết nối hộp thư) → vẫn thử lại tới hết `tries`.
 local function getChyusenCode(key, id, tries, gap)
-    if not id or id == "" then return nil, "thiếu id" end
+    -- Case 1: Thiếu id
+    if not id or id == "" then
+        return nil, "MISSING_ID", "thiếu id"
+    end
+
     tries = math.max(1, tonumber(tries) or 20)
     gap = tonumber(gap) or 5
     local url = BASE .. "/api/v1/chyusen/code?id=" .. tostring(id)
+    local lastErr = "unknown"
+    local lastCode = "UNKNOWN"
+
     for attempt = 1, tries do
         local body, st = httpGet(url, { ["x-api-key"] = key })
+
+        -- Case 2: Lỗi mạng
         if not body then
-            notify(string.format("getChyusenCode: lần %d/%d lỗi mạng %s", attempt, tries, tostring(st)), 2)
-        elseif st == 200 then
-            local d = jsonDecode(body) or {}
-            if d.found and d.code and d.code ~= "" then
-                notify(string.format("getChyusenCode: OK (lần %d) code=%s", attempt, tostring(d.code)), 3)
-                return d.code
-            end
-            notify(string.format("getChyusenCode: lần %d/%d mail chưa tới (found=%s)",
-                attempt, tries, tostring(d.found)), 2)
-        elseif st == 400 or st == 404 then
-            -- Thiếu email_forward/app_password (400) hoặc không thấy dòng (404) → poll lại vô ích.
-            local reason = string.format("HTTP %s %s", tostring(st), tostring(body))
-            notify("getChyusenCode: lỗi cứng " .. reason .. " — dừng poll", 3)
-            return nil, reason
-        else
-            -- 502 (sai app pass / không nối được hộp thư) hoặc HTTP khác → coi là tạm thời, thử lại.
-            notify(string.format("getChyusenCode: lần %d/%d HTTP %s %s — thử lại",
-                attempt, tries, tostring(st), tostring(body)), 3)
+            lastErr = "lỗi mạng: " .. tostring(st)
+            lastCode = "NETWORK_ERROR"
+            notify(string.format("getCode %d/%d: %s", attempt, tries, lastErr), 2)
+            if attempt < tries then sleep(gap) end
+            goto continue
         end
+
+        -- Case 3: HTTP 200
+        if st == 200 then
+            local d = jsonDecode(body)
+            if not d then
+                lastErr = "không parse được JSON"
+                lastCode = "INVALID_JSON"
+                notify(string.format("getCode %d/%d: %s", attempt, tries, lastErr), 2)
+                if attempt < tries then sleep(gap) end
+                goto continue
+            end
+
+            -- Case 3a: Có code
+            if d.found and d.code and d.code ~= "" then
+                notify(string.format("Code OK (lần %d): %s", attempt, tostring(d.code)), 3)
+                return d.code, "OK", nil
+            end
+
+            -- Case 3b: Mail chưa tới
+            lastErr = "mail chưa tới (found=" .. tostring(d.found) .. ")"
+            lastCode = "MAIL_NOT_ARRIVED"
+            notify(string.format("getCode %d/%d: %s", attempt, tries, lastErr), 2)
+            if attempt < tries then sleep(gap) end
+            goto continue
+        end
+
+        -- Case 4: HTTP 400 = thiếu email_forward/app_password
+        if st == 400 then
+            return nil, "BAD_CONFIG", "HTTP 400: thiếu email_forward/app_password trong dòng chyusen"
+        end
+
+        -- Case 5: HTTP 404 = không tìm thấy dòng
+        if st == 404 then
+            return nil, "NOT_FOUND", "HTTP 404: không tìm thấy dòng chyusen id=" .. tostring(id)
+        end
+
+        -- Case 6: HTTP 401/403 = key sai
+        if st == 401 or st == 403 then
+            return nil, "UNAUTHORIZED", "HTTP " .. st .. ": apikey sai"
+        end
+
+        -- Case 7: HTTP 502 = lỗi kết nối mail server
+        if st == 502 then
+            lastErr = "HTTP 502: lỗi kết nối mail server (sai app password?)"
+            lastCode = "MAIL_SERVER_ERROR"
+            notify(string.format("getCode %d/%d: %s", attempt, tries, lastErr), 2)
+            if attempt < tries then sleep(gap) end
+            goto continue
+        end
+
+        -- Case 8: HTTP 503/504 = server tạm không khả dụng
+        if st == 503 or st == 504 then
+            lastErr = "HTTP " .. st .. ": server tạm không khả dụng"
+            lastCode = "SERVER_UNAVAILABLE"
+            notify(string.format("getCode %d/%d: %s", attempt, tries, lastErr), 2)
+            if attempt < tries then sleep(gap) end
+            goto continue
+        end
+
+        -- Case 9: HTTP khác
+        lastErr = "HTTP " .. tostring(st) .. ": " .. tostring(body):sub(1, 100)
+        lastCode = "HTTP_" .. tostring(st)
+        notify(string.format("getCode %d/%d: %s", attempt, tries, lastErr), 2)
         if attempt < tries then sleep(gap) end
+
+        ::continue::
     end
-    return nil, "hết " .. tries .. " lần vẫn chưa có code (mail chưa tới)"
+
+    return nil, lastCode, "hết " .. tries .. " lần: " .. lastErr
 end
 
--- ===== Safari web helpers (port từ reg-poke.lua) =====
-
--- ensureSafari: kéo Safari về foreground khi máy lỡ khoá / về màn hình chính (web-action cần Safari
--- foreground). wake() bật màn + mở khoá (nếu KHÔNG có passcode) rồi launch Safari.
+-- ========== SAFARI HELPERS ==========
 local function ensureSafari()
     wake()
     sleep(0.5)
@@ -277,224 +386,625 @@ local function ensureSafari()
     sleep(1.5)
 end
 
--- waitLoad: CHỜ trang load XONG (safari.load → readyState=='complete') tối đa `timeout` giây
--- (mặc định 60). Daemon cũ chưa có safari.load → chờ cứng 3s dự phòng.
 local function waitLoad(timeout)
     if safari and safari.load then
         local ok, diag = safari.load(timeout or 60)
-        if ok then notify("Trang đã load xong", 2)
-        else notify("safari.load chưa xong: " .. tostring(diag), 3) end
-        return ok
+        if ok then
+            notify("Trang load xong", 2)
+            return true, "OK"
+        end
+        return false, tostring(diag or "timeout")
     end
     sleep(3)
-    return true
+    return true, "no safari.load (daemon cũ)"
 end
 
--- openAndWait: mở URL rồi CHỜ load xong (waitLoad). Tự thử lại nếu Safari treo launch (màn trắng):
--- ensureSafari kéo Safari dậy rồi mở lại, tối đa `tries` lần (mặc định 3).
-local function openAndWait(url, timeout, tries)
-    tries = tonumber(tries) or 3
-    for attempt = 1, tries do
-        openUrl(url)
-        sleep(2)                                   -- chờ Safari foreground + bắt đầu tải trang
-        if waitLoad(timeout) then return true end
-        if attempt < tries then
-            notify("Trang chưa load (lần " .. attempt .. "/" .. tries .. ") — mở lại Safari", 3)
+local function openAndWait(url, timeout, retries)
+    retries = tonumber(retries) or 3
+    local lastDiag = "unknown"
+
+    for attempt = 1, retries do
+        -- Case 1: openUrl fail
+        local okOpen = pcall(function() openUrl(url) end)
+        if not okOpen then
+            lastDiag = "openUrl exception"
+            notify(string.format("Mở URL lỗi (lần %d/%d): %s", attempt, retries, lastDiag), 2)
+            if attempt < retries then
+                ensureSafari()
+                sleep(2)
+            end
+            goto continue
+        end
+
+        sleep(2)
+
+        -- Case 2: waitLoad
+        local ok, diag = waitLoad(timeout)
+        if ok then return true, "OK" end
+
+        lastDiag = tostring(diag)
+        if attempt < retries then
+            notify(string.format("Mở trang lỗi (lần %d/%d): %s — thử lại", attempt, retries, lastDiag), 2)
             ensureSafari()
             sleep(2)
         end
+
+        ::continue::
     end
-    notify("Mở trang thất bại sau " .. tries .. " lần", 3)
-    return false
+
+    return false, "mở trang thất bại sau " .. retries .. " lần: " .. lastDiag
 end
 
--- waitFor: gọi lại `fn` (trả ok, diag) tối đa `timeout` giây, mỗi `gap` giây, tới khi ok=true. Nếu
--- diag báo "foreground" (Safari rớt do khoá/về home) → tự kéo Safari lại rồi thử tiếp.
 local function waitFor(fn, timeout, gap)
     timeout = tonumber(timeout) or 10
     gap = tonumber(gap) or 0.5
     local tries = math.max(1, math.floor(timeout / gap))
-    local ok, diag
+    local lastDiag = "unknown"
+
     for i = 1, tries do
-        ok, diag = fn()
+        local okCall, ok, diag = pcall(fn)
+
+        -- Case 1: fn exception
+        if not okCall then
+            lastDiag = "exception: " .. tostring(ok)
+            if i < tries then sleep(gap) end
+            goto continue
+        end
+
+        -- Case 2: Success
         if ok then return true, diag, i end
-        if type(diag) == "string" and diag:find("foreground") then
+
+        lastDiag = tostring(diag or "unknown")
+
+        -- Case 3: Safari không foreground
+        if lastDiag:find("foreground") then
             ensureSafari()
         elseif i < tries then
             sleep(gap)
         end
+
+        ::continue::
     end
-    return false, tostring(diag), tries
+
+    return false, lastDiag, tries
 end
 
--- fillWait / clickWait: safari.fill / safari.click CÓ chờ element (mặc định 10s). field nhận id trần
--- ("email") hoặc CSS selector ("a.loginBtn").
-local function fillWait(field, value, timeout, gap)
-    return waitFor(function() return safari.fill(field, value) end, timeout, gap)
-end
-local function clickWait(field, timeout, gap)
-    return waitFor(function() return safari.click(field) end, timeout, gap)
-end
-
--- typeWait: GÕ từng ký tự chống anti-bot (safari.type) CÓ chờ element. Cần daemon có verb WEBTYPE
--- (build mới); nếu chưa có (daemon cũ) → trả false + diag rõ để đánh dấu failed, KHÔNG tự set thẳng
--- (tránh lại bị detect như safari.fill).
-local function typeWait(field, value, timeout, gap)
+local function typeWait(field, value, timeout)
+    -- Case 1: safari.type không tồn tại
+    if not safari then
+        return false, "safari object không tồn tại"
+    end
     if type(safari.type) ~= "function" then
-        return false, "safari.type chưa có — cần deploy build daemon có WEBTYPE"
+        return false, "safari.type chưa có (cần daemon mới có WEBTYPE)"
     end
-    return waitFor(function() return safari.type(field, value) end, timeout, gap)
+
+    -- Case 2: field/value rỗng
+    if not field or field == "" then
+        return false, "field rỗng"
+    end
+    if not value then
+        return false, "value nil"
+    end
+
+    return waitFor(function() return safari.type(field, value) end, timeout, 0.5)
 end
 
--- ===== Cấu hình login lottery =====
-local CHYUSEN_TYPE = "pokemon"        -- loại chyusen cần lấy (cố định type=pokemon)
-local LOGIN_URL    = "https://www.pokemoncenter-online.com/lottery/login.html"
-local SEL_EMAIL    = "email"          -- <input id="email">
-local SEL_PASSWORD = "password"       -- <input id="password" name="current-password">
-local SEL_LOGINBTN = "a.loginBtn"     -- <a class="btn loginBtn">ログイン</a>
+local function clickWait(field, timeout)
+    -- Case 1: safari.click không tồn tại
+    if not safari then
+        return false, "safari object không tồn tại"
+    end
+    if type(safari.click) ~= "function" then
+        return false, "safari.click chưa có"
+    end
 
--- main: 1 lượt: đổi IP → claim → mở login + điền email/mật khẩu + bấm ログイン → chờ trang passcode →
--- POLL /code?id=<id> lấy passcode → gõ vào #authCode → bấm 認証する → upload passcode (success). Trả
--- "empty" khi HẾT dòng để claim (dừng vòng); "ok" khi đã claim được 1 dòng (vòng ngoài tiếp tục sang
--- dòng kế). Bước web/lấy code hỏng → upload status "failed" rồi "ok" (dòng đó đã bị đánh dấu claimed).
-local function main(key)
-    -- (1) Nếu config bật use4g=1: TẮT/BẬT 4G xin IP mới trước. use4g=0 → thoát ngay, không đụng sóng.
+    -- Case 2: field rỗng
+    if not field or field == "" then
+        return false, "selector rỗng"
+    end
+
+    return waitFor(function() return safari.click(field) end, timeout, 0.5)
+end
+
+local function clearSafari()
+    -- Case 1: Thử safari.clear() trước (daemon mới)
+    if safari and type(safari.clear) == "function" then
+        local okCall, ok, count, diag = pcall(safari.clear)
+        if okCall and ok then
+            notify(string.format("Safari clear OK - xóa %s mục", tostring(count)), 2)
+            return true, "OK"
+        end
+        notify("safari.clear lỗi: " .. tostring(count or diag) .. " — thử clearAppData", 2)
+    end
+
+    -- Case 2: Fallback clearAppData
+    if type(clearAppData) == "function" then
+        local okCall, ok, count = pcall(clearAppData, "com.apple.mobilesafari")
+        if okCall and ok then
+            notify("clearAppData Safari OK - " .. tostring(count) .. " mục", 2)
+            return true, "OK"
+        end
+        return false, "clearAppData lỗi: " .. tostring(ok or count)
+    end
+
+    -- Case 3: Không có hàm clear
+    return false, "không có hàm clear Safari (daemon quá cũ)"
+end
+
+-- ========== APPLY ITEM ==========
+local function applyItem(idx)
+    notify("--- Ứng tuyển ITEM " .. idx .. " ---", 2)
+    local errors = {}
+
+    -- Step 1: Click "詳しく見る" để mở chi tiết
+    local selDetail = string.format("ul.comOrderList > li:nth-child(%d) dl.subDl dt", idx)
+    local ok1, diag1 = clickWait(selDetail, 10)
+    if not ok1 then
+        table.insert(errors, "step1_detail: " .. tostring(diag1))
+        notify("FAIL item " .. idx .. ": không mở được chi tiết - " .. tostring(diag1), 2)
+        return false, errors, "DETAIL_CLICK_FAIL"
+    end
+    sleep(1)
+
+    -- Step 2: Click radio chọn sản phẩm
+    local selRadio = string.format('ul.comOrderList > li:nth-child(%d) input[type="radio"]', idx)
+    local ok2, diag2 = clickWait(selRadio, 10)
+    if not ok2 then
+        table.insert(errors, "step2_radio: " .. tostring(diag2))
+        notify("FAIL item " .. idx .. ": không chọn được radio - " .. tostring(diag2), 2)
+        return false, errors, "RADIO_CLICK_FAIL"
+    end
+    sleep(0.5)
+
+    -- Step 3: Check checkbox đồng ý
+    local selCheckbox = string.format('ul.comOrderList > li:nth-child(%d) input[type="checkbox"].-check', idx)
+    local ok3, diag3 = clickWait(selCheckbox, 10)
+    if not ok3 then
+        table.insert(errors, "step3_checkbox: " .. tostring(diag3))
+        notify("FAIL item " .. idx .. ": không check được checkbox - " .. tostring(diag3), 2)
+        return false, errors, "CHECKBOX_CLICK_FAIL"
+    end
+    sleep(0.5)
+
+    -- Step 4: Click "応募する" mở popup
+    local selApply = string.format('ul.comOrderList > li:nth-child(%d) a.popup-modal', idx)
+    local ok4, diag4 = clickWait(selApply, 10)
+    if not ok4 then
+        table.insert(errors, "step4_popup: " .. tostring(diag4))
+        notify("FAIL item " .. idx .. ": không bấm được 応募する - " .. tostring(diag4), 2)
+        return false, errors, "POPUP_CLICK_FAIL"
+    end
+    sleep(1)
+
+    -- Step 5: Click "#applyBtn" xác nhận
+    local ok5, diag5 = clickWait("#applyBtn", 10)
+    if not ok5 then
+        table.insert(errors, "step5_applyBtn: " .. tostring(diag5))
+        notify("FAIL item " .. idx .. ": không bấm được #applyBtn - " .. tostring(diag5), 2)
+        return false, errors, "APPLYBTN_CLICK_FAIL"
+    end
+
+    -- Step 6: Chờ load
+    local okLoad, diagLoad = waitLoad(30)
+    if not okLoad then
+        table.insert(errors, "step6_load: " .. tostring(diagLoad))
+        notify("WARN item " .. idx .. ": trang load chậm - " .. tostring(diagLoad), 2)
+        -- Không return false, coi như đã submit thành công
+    end
+    sleep(1)
+
+    notify("OK: Hoàn thành item " .. idx, 2)
+    return true, {}, "OK"
+end
+
+-- ========== MAIN FLOW 1 ACCOUNT ==========
+local function processOne(key, accountNum)
+    local rec, code, errCode, errMsg
+    local failReason = nil
+
+    -- Step 1: Đổi IP 4G
     cycle4g()
 
-    -- (2) Lấy 1 dòng thông tin chyusen type=pokemon.
-    notify("Đang lấy 1 dòng thông tin chyusen (type=" .. CHYUSEN_TYPE .. ")...", 3)
-    local rec = claimChyusen(key, CHYUSEN_TYPE)
+    -- Step 2: Claim 1 dòng
+    notify(string.format("[#%d] Đang lấy dòng chyusen (type=%s)...", accountNum, CHYUSEN_TYPE), 3)
+    rec, code, errMsg = claimChyusen(key, CHYUSEN_TYPE)
+
     if not rec then
-        notify("Không lấy được dòng chyusen (hết dữ liệu hoặc lỗi)", 3)
-        return "empty"
+        -- Phân loại lỗi claim chi tiết
+        if code == "EMPTY" then
+            notify("[#" .. accountNum .. "] Hết dòng chyusen — dừng vòng lặp", 4)
+            return "STOP_EMPTY", nil
+        elseif code == "NETWORK_ERROR" then
+            notify("[#" .. accountNum .. "] Lỗi mạng claim: " .. tostring(errMsg), 3)
+            return "RETRY_NETWORK", nil
+        elseif code == "UNAUTHORIZED" then
+            notify("[#" .. accountNum .. "] API key sai hoặc hết hạn — dừng", 4)
+            return "STOP_AUTH", nil
+        elseif code == "SERVER_ERROR" then
+            notify("[#" .. accountNum .. "] Server lỗi: " .. tostring(errMsg), 3)
+            return "RETRY_SERVER", nil
+        elseif code == "RATE_LIMIT" then
+            notify("[#" .. accountNum .. "] Rate limit — chờ 30s rồi thử lại", 3)
+            sleep(30)
+            return "RETRY_RATE", nil
+        elseif code == "MISSING_KEY" then
+            notify("[#" .. accountNum .. "] Thiếu apikey — dừng", 4)
+            return "STOP_CONFIG", nil
+        elseif code == "INVALID_JSON" then
+            notify("[#" .. accountNum .. "] API trả về JSON không hợp lệ: " .. tostring(errMsg), 3)
+            return "RETRY_JSON", nil
+        elseif code == "NOT_FOUND" then
+            notify("[#" .. accountNum .. "] API endpoint không tồn tại — dừng", 4)
+            return "STOP_API", nil
+        else
+            notify("[#" .. accountNum .. "] Claim lỗi [" .. tostring(code) .. "]: " .. tostring(errMsg), 3)
+            return "RETRY_UNKNOWN", nil
+        end
     end
-    notify(string.format("Chyusen #%s [%s]: %s (còn lại %s)",
-        tostring(rec.id), tostring(rec.type), tostring(rec.content), tostring(rec.remaining)), 4)
 
-    -- Tách content "email|password" (cho phép khoảng trắng quanh dấu |). Sai định dạng → failed.
+    local id = rec.id
+    notify(string.format("[#%d] Claim OK: id=%s", accountNum, tostring(id)), 3)
+
+    -- Step 3: Parse content
     local content = tostring(rec.content or "")
+
+    -- Case 3a: Content rỗng
+    if content == "" then
+        failReason = "content rỗng"
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
+    end
+
+    -- Case 3b: Tách email|password
     local email, password = content:match("^%s*(.-)%s*|%s*(.-)%s*$")
-    if not email or email == "" or not password or password == "" then
-        local reason = "content sai định dạng, cần email|password: " .. content
-        notify(reason, 4)
-        uploadResult(key, rec.id, "failed: " .. reason, "failed")
-        return "ok"
+
+    if not email or email == "" then
+        failReason = "content sai định dạng (thiếu email): " .. content:sub(1, 50)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
     end
 
-    -- (3) Fresh session: xoá dữ liệu Safari để không dính phiên/tab account trước.
-    local okc, nc = clearAppData("com.apple.mobilesafari")
-    notify("clearAppData Safari: " .. (okc and (tostring(nc) .. " mục") or ("lỗi " .. tostring(nc))), 2)
-
-    -- (4) Mở trang login lottery, chờ load xong (≤30s, tự thử lại nếu Safari treo launch).
-    notify("Mở trang login lottery...", 3)
-    if not openAndWait(LOGIN_URL, 30) then
-        uploadResult(key, rec.id, "failed: mở trang login thất bại", "failed")
-        return "ok"
+    if not password or password == "" then
+        failReason = "content sai định dạng (thiếu password): " .. content:sub(1, 50)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
     end
 
-    -- (5) GÕ email từng ký tự (chống anti-bot) — chờ ô xuất hiện ≤10s. Nghỉ 1 nhịp "đọc trang" trước.
-    humanPause(0.9, 2.2)
-    local oke, de = typeWait(SEL_EMAIL, email, 10)
-    if not oke then
-        uploadResult(key, rec.id, "failed: gõ email lỗi (" .. tostring(de) .. ")", "failed")
-        return "ok"
+    -- Case 3c: Email không hợp lệ (không có @)
+    if not email:find("@") then
+        failReason = "email không hợp lệ (thiếu @): " .. email:sub(1, 30)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
     end
-    notify("Đã gõ email: " .. email, 2)
 
-    -- (6) GÕ mật khẩu từng ký tự. Nghỉ 1 nhịp như người chuyển ô email → ô mật khẩu.
-    humanPause(0.5, 1.3)
-    local okp, dp = typeWait(SEL_PASSWORD, password, 10)
-    if not okp then
-        uploadResult(key, rec.id, "failed: gõ mật khẩu lỗi (" .. tostring(dp) .. ")", "failed")
-        return "ok"
+    notify(string.format("[#%d] Account: %s", accountNum, email), 3)
+
+    -- Step 4: Clear Safari
+    local okClear, clearDiag = clearSafari()
+    if not okClear then
+        notify("[#" .. accountNum .. "] Clear Safari lỗi: " .. tostring(clearDiag) .. " — vẫn thử tiếp", 2)
+        -- Không fail, vẫn thử login (có thể Safari đã sạch)
     end
-    notify("Đã gõ mật khẩu", 2)
+    sleep(1)
 
-    -- (7) Bấm nút đăng nhập (ログイン). Nghỉ 1 nhịp trước khi bấm (người kiểm lại rồi mới nhấn).
-    humanPause(0.6, 1.5)
-    if not clickWait(SEL_LOGINBTN, 10) then
-        uploadResult(key, rec.id, "failed: không bấm được nút đăng nhập", "failed")
-        return "ok"
+    -- Step 5: Mở trang login
+    notify("[#" .. accountNum .. "] Mở trang login...", 3)
+    local okOpen, openDiag = openAndWait(LOGIN_URL, 30, 3)
+    if not okOpen then
+        failReason = "mở trang login lỗi: " .. tostring(openDiag)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
     end
-    notify("Đã bấm đăng nhập — chờ web load (≤30s)...", 3)
 
-    sleep(5)   -- chờ Safari bắt đầu điều hướng sau khi submit login
+    -- Step 6: Gõ email
+    humanPause(0.9, 2.0)
+    local okEmail, emailDiag = typeWait(SEL_EMAIL, email, 10)
+    if not okEmail then
+        failReason = "gõ email lỗi: " .. tostring(emailDiag)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
+    end
+    notify("[#" .. accountNum .. "] Đã gõ email", 2)
 
-    -- (8) Chờ trang load xong (login → trang パスコード入力 nếu bật OTP).
+    -- Step 7: Gõ password
+    humanPause(0.5, 1.2)
+    local okPass, passDiag = typeWait(SEL_PASSWORD, password, 10)
+    if not okPass then
+        failReason = "gõ password lỗi: " .. tostring(passDiag)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
+    end
+    notify("[#" .. accountNum .. "] Đã gõ password", 2)
+
+    -- Step 8: Bấm login
+    humanPause(0.6, 1.4)
+    local okLogin, loginDiag = clickWait(SEL_LOGINBTN, 10)
+    if not okLogin then
+        failReason = "bấm login lỗi: " .. tostring(loginDiag)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
+    end
+    notify("[#" .. accountNum .. "] Đã bấm ログイン — chờ load...", 3)
+
+    sleep(5)
     waitLoad(30)
 
-    -- (9) PHẢI tới trang nhập passcode: chờ ô #authCode (<input id="authCode">) xuất hiện ≤12s.
-    -- Không thấy = login không tới bước OTP (sai mật khẩu / trang không load) → thất bại.
-    if not clickWait("#authCode", 12) then
-        uploadResult(key, rec.id, "failed: không thấy trang passcode (#authCode)", "failed")
-        return "ok"
+    -- Step 9: Chờ trang passcode
+    local okAuthCode, authDiag = clickWait("#authCode", 15)
+    if not okAuthCode then
+        -- Có thể: sai password, tài khoản bị khóa, hoặc đã login sẵn
+        failReason = "không thấy trang passcode (#authCode): " .. tostring(authDiag) .. " (có thể sai password hoặc tài khoản bị khóa)"
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
     end
-    notify("Trang パスコード入力 → chờ mail lấy passcode...", 3)
+    notify("[#" .. accountNum .. "] Trang パスコード → chờ mail...", 3)
 
-    -- (10) POLL /api/v1/chyusen/code?id=<id> tới found:true để bóc passcode (code) từ mail,
-    -- tối đa 20 lần cách 5s (~100s chờ mail). Không lấy được → thất bại.
-    local code, cerr = getChyusenCode(key, rec.id, 20, 5)
-    if not code then
-        notify("Không lấy được passcode: " .. tostring(cerr), 4)
-        uploadResult(key, rec.id, "failed: không lấy được code (" .. tostring(cerr) .. ")", "failed")
-        return "ok"
+    -- Step 10: Poll lấy code
+    local passcode, codeStatus, codeDiag = getChyusenCode(key, id, 20, 5)
+    if not passcode then
+        if codeStatus == "BAD_CONFIG" then
+            failReason = "thiếu email_forward/app_password trong dòng chyusen"
+        elseif codeStatus == "NOT_FOUND" then
+            failReason = "không tìm thấy dòng chyusen (id không tồn tại?)"
+        elseif codeStatus == "MAIL_NOT_ARRIVED" then
+            failReason = "mail không tới sau 100s poll"
+        elseif codeStatus == "MAIL_SERVER_ERROR" then
+            failReason = "lỗi kết nối mail server (sai app password?)"
+        elseif codeStatus == "NETWORK_ERROR" then
+            failReason = "lỗi mạng khi poll code"
+        elseif codeStatus == "UNAUTHORIZED" then
+            failReason = "apikey sai khi poll code"
+        else
+            failReason = "lấy code lỗi [" .. tostring(codeStatus) .. "]: " .. tostring(codeDiag)
+        end
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
     end
 
-    -- (11) GÕ passcode vào ô #authCode (từng ký tự chống anti-bot). Nghỉ 1 nhịp trước.
-    humanPause(0.6, 1.5)
-    local okc, dc = typeWait("#authCode", code, 10)
-    if not okc then
-        uploadResult(key, rec.id, "failed: gõ passcode lỗi (" .. tostring(dc) .. ")", "failed")
-        return "ok"
+    -- Step 11: Gõ passcode
+    humanPause(0.6, 1.4)
+    local okCode, codeDiag2 = typeWait("#authCode", passcode, 10)
+    if not okCode then
+        failReason = "gõ passcode lỗi: " .. tostring(codeDiag2)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
     end
-    notify("Đã gõ passcode: " .. code, 2)
+    notify("[#" .. accountNum .. "] Đã gõ passcode: " .. passcode, 2)
 
-    -- (12) Bấm 認証する (<a id="certify">認証する</a>) để xác thực. Nghỉ 1 nhịp trước.
-    humanPause(0.6, 1.5)
-    if not clickWait("#certify", 10) then
-        uploadResult(key, rec.id, "failed: không bấm được nút 認証する", "failed")
-        return "ok"
+    -- Step 12: Bấm 認証する
+    humanPause(0.6, 1.4)
+    local okCertify, certifyDiag = clickWait("#certify", 10)
+    if not okCertify then
+        failReason = "bấm 認証する lỗi: " .. tostring(certifyDiag)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
     end
-    notify("Đã bấm 認証する — chờ web load (≤30s)...", 3)
+    notify("[#" .. accountNum .. "] Đã bấm 認証する — chờ load...", 3)
 
-    -- (13) Chờ web load sau xác thực.
+    sleep(5)
     waitLoad(30)
 
-    -- (14) Upload THÀNH CÔNG + passcode vừa nhập (status=success → tab "Thành công").
-    if uploadResult(key, rec.id, code, "success") then
-        notify("Đã upload [success] passcode cho id=" .. tostring(rec.id) .. ": " .. code, 4)
+    notify("[#" .. accountNum .. "] ===== LOGIN THÀNH CÔNG =====", 3)
+
+    -- Step 13: Mở trang apply
+    notify("[#" .. accountNum .. "] Mở trang chyusen apply...", 3)
+    local okApplyPage, applyPageDiag = openAndWait(APPLY_URL, 30, 3)
+    if not okApplyPage then
+        failReason = "mở trang apply lỗi: " .. tostring(applyPageDiag)
+        notify("[#" .. accountNum .. "] " .. failReason, 3)
+        uploadResult(key, id, "failed: " .. failReason, "failed")
+        return "CONTINUE", rec
+    end
+
+    -- Step 14: Ứng tuyển các items trong LIST
+    notify(string.format("[#%d] Ứng tuyển %d items: %s", accountNum, #LIST, table.concat(LIST, ", ")), 3)
+    local successCount = 0
+    local failedItems = {}
+    local itemErrors = {}
+
+    for i, idx in ipairs(LIST) do
+        notify(string.format("[#%d] >>> [%d/%d] ITEM %d <<<", accountNum, i, #LIST, idx), 2)
+        local okItem, errs, errCode = applyItem(idx)
+        if okItem then
+            successCount = successCount + 1
+        else
+            table.insert(failedItems, idx)
+            itemErrors[idx] = table.concat(errs, "; ") .. " [" .. tostring(errCode) .. "]"
+            notify("[#" .. accountNum .. "] WARN: Item " .. idx .. " thất bại", 2)
+        end
+        sleep(1)
+    end
+
+    -- Step 15: Upload kết quả
+    local resultMsg = string.format("items:%s success:%d/%d", table.concat(LIST, ","), successCount, #LIST)
+    if #failedItems > 0 then
+        resultMsg = resultMsg .. " failed:" .. table.concat(failedItems, ",")
+    end
+
+    if successCount > 0 then
+        uploadResult(key, id, resultMsg, "success")
+        notify(string.format("[#%d] THÀNH CÔNG: %d/%d items", accountNum, successCount, #LIST), 3)
+    elseif successCount == 0 and #LIST > 0 then
+        uploadResult(key, id, "failed: " .. resultMsg, "failed")
+        notify(string.format("[#%d] THẤT BẠI: 0/%d items", accountNum, #LIST), 3)
     else
-        notify("Upload kết quả lỗi (mạng/HTTP) cho id=" .. tostring(rec.id), 4)
+        -- LIST rỗng
+        uploadResult(key, id, "login OK, no items to apply", "success")
+        notify(string.format("[#%d] Login OK nhưng LIST rỗng", accountNum), 3)
     end
-    return "ok"
+
+    return "CONTINUE", rec
 end
 
--- ============================================================================
--- CHẠY: đọc key + type từ config rồi lặp LẤY→XỬ LÝ→UPLOAD tới khi hết dòng
--- (claimChyusen trả nil) hoặc người dùng ấn "Dừng". Lỗi bất ngờ 1 dòng KHÔNG
--- làm dừng vòng (log rồi sang dòng kế) — chỉ lệnh "Dừng" mới thoát.
--- ============================================================================
-local cfg = readConfig()
-local key = cfg.apikey or cfg.api_key or cfg["x-api-key"]
-if not key or key == "" then
-    notify("Không đọc được apikey từ config_reg_poke.txt — dừng", 5)
+-- ========== MAIN LOOP ==========
+notify("========== CHYUSEN LOOP (vô hạn, dừng khi hết acc 100 lần liên tiếp) ==========", 3)
+
+-- Đọc config
+local cfg, cfgErr = readConfig()
+if cfgErr then
+    notify("Lỗi đọc config: " .. cfgErr .. " — dừng", 5)
     return
 end
+
+local key = cfg.apikey or cfg.api_key or cfg["x-api-key"]
+if not key or key == "" then
+    notify("Không tìm thấy apikey trong config — dừng", 5)
+    notify("Config path: " .. CONFIG_PATH, 3)
+    notify("Cần có dòng: apikey=<your-key>", 3)
+    return
+end
+
+local successTotal = 0
+local failedTotal = 0
+local errorRetryCount = 0      -- đếm retry lỗi mạng/server liên tiếp
+local emptyRetryCount = 0      -- đếm retry khi hết acc liên tiếp
+
 local n = 0
 while true do
     n = n + 1
-    notify("===== Chyusen lượt #" .. n .. " =====", 2)
-    local ok, err = pcall(main, key)
+
+    if emptyRetryCount > 0 then
+        notify(string.format("===== Lượt #%d (chờ acc mới: %d/%d) =====", n, emptyRetryCount, MAX_EMPTY_RETRY), 2)
+    else
+        notify(string.format("===== Lượt #%d =====", n), 2)
+    end
+
+    local ok, result = pcall(processOne, key, n)
+
     if not ok then
-        if type(err) == "string" and err:find("dừng", 1, true) then
-            notify("Đã dừng theo yêu cầu người dùng (đã xong " .. (n - 1) .. " lượt).", 3)
+        -- pcall catch lỗi bất ngờ
+        local errStr = tostring(result)
+
+        -- Case: User dừng script
+        if errStr:find("dừng", 1, true) or errStr:find("stop", 1, true) or errStr:find("abort", 1, true) then
+            notify("Đã dừng theo yêu cầu người dùng (xong " .. successTotal .. " acc)", 3)
             break
         end
-        notify("Lượt #" .. n .. " lỗi bất ngờ: " .. tostring(err) .. " → sang dòng kế", 4)
-    elseif err == "empty" then
-        -- main báo HẾT dòng chyusen (claim nil) → dừng vòng cho gọn.
-        notify("Hết dòng chyusen để xử lý — kết thúc.", 3)
-        break
+
+        -- Case: Lỗi bất ngờ khác
+        notify("Lượt #" .. n .. " lỗi bất ngờ: " .. errStr, 4)
+        failedTotal = failedTotal + 1
+        errorRetryCount = errorRetryCount + 1
+
+        if errorRetryCount >= MAX_ERROR_RETRY then
+            notify("Quá nhiều lỗi liên tiếp (" .. MAX_ERROR_RETRY .. ") — dừng", 4)
+            break
+        end
+    else
+        -- Xử lý result code
+        if result == "STOP_EMPTY" then
+            -- Hết acc → tăng emptyRetryCount, chờ rồi thử lại
+            emptyRetryCount = emptyRetryCount + 1
+            n = n - 1  -- không tính lượt này
+
+            if emptyRetryCount >= MAX_EMPTY_RETRY then
+                notify(string.format("Đã thử %d lần mà vẫn hết acc — DỪNG HẲN", MAX_EMPTY_RETRY), 4)
+                break
+            end
+
+            notify(string.format("Hết acc, chờ %ds rồi thử lại (%d/%d)...",
+                EMPTY_RETRY_GAP, emptyRetryCount, MAX_EMPTY_RETRY), 2)
+            sleep(EMPTY_RETRY_GAP)
+
+        elseif result == "STOP_AUTH" then
+            notify("API key sai — kết thúc vòng lặp", 4)
+            break
+        elseif result == "STOP_CONFIG" then
+            notify("Lỗi config — kết thúc vòng lặp", 4)
+            break
+        elseif result == "STOP_API" then
+            notify("API endpoint không tồn tại — kết thúc vòng lặp", 4)
+            break
+        elseif result:find("^RETRY") then
+            -- Các case retry lỗi mạng/server
+            n = n - 1  -- không tính lượt này
+            errorRetryCount = errorRetryCount + 1
+            if errorRetryCount >= MAX_ERROR_RETRY then
+                notify("Quá nhiều retry lỗi liên tiếp (" .. MAX_ERROR_RETRY .. ") — dừng", 4)
+                break
+            end
+            notify("Retry sau 5s...", 2)
+            sleep(5)
+        elseif result == "CONTINUE" then
+            -- Đã xử lý xong 1 account (dù thành công hay thất bại)
+            -- QUAN TRỌNG: Có acc mới → RESET emptyRetryCount về 0
+            if emptyRetryCount > 0 then
+                notify(string.format("Có acc mới! Reset empty retry counter (was %d)", emptyRetryCount), 3)
+            end
+            emptyRetryCount = 0
+            errorRetryCount = 0  -- reset error retry counter
+            successTotal = successTotal + 1
+        else
+            -- Case không xác định
+            notify("Result không xác định: " .. tostring(result) .. " — tiếp tục", 2)
+            errorRetryCount = 0
+        end
     end
-    sleep(2)   -- nghỉ giữa 2 dòng (cũng là điểm để lệnh Dừng kịp thoát)
+
+    sleep(2)
 end
+
+notify("========================================", 3)
+notify(string.format("TỔNG KẾT: %d acc xử lý, %d lỗi bất ngờ, chờ acc %d lần",
+    successTotal, failedTotal, emptyRetryCount), 4)
+notify("========== KẾT THÚC ==========", 3)
+
+--[[
+  HƯỚNG DẪN CẤU HÌNH:
+
+  1. LIST = {2, 4, 6}  → items cần ứng tuyển
+  2. MAX_EMPTY_RETRY = 100  → khi hết acc, thử lại tối đa 100 lần rồi dừng hẳn
+  3. EMPTY_RETRY_GAP = 5    → chờ 5s giữa mỗi lần retry khi hết acc
+
+  LOGIC VÒNG LẶP:
+    - Chạy VÔ HẠN, không giới hạn số lượng account
+    - Khi hết acc (HTTP 409): chờ EMPTY_RETRY_GAP giây rồi thử lại
+    - Nếu có acc mới: RESET emptyRetryCount về 0 (tiếp tục vô hạn)
+    - Nếu thử MAX_EMPTY_RETRY lần liên tiếp mà vẫn hết: DỪNG HẲN
+
+  DANH SÁCH ITEMS:
+    1 = 本人認証済み枠 - MEGA 拡張パック 30th CELEBRATION BOX
+    2 = 本人未認証枠 - MEGA 拡張パック 30th CELEBRATION BOX
+    3 = 本人認証済み枠 - プレミアムデッキセット エーフィ・ブラッキー
+    4 = 本人未認証枠 - プレミアムデッキセット エーフィ・ブラッキー
+    5 = 本人認証済み枠 - FUTURISTIC BOX
+    6 = 本人未認証枠 - FUTURISTIC BOX
+
+  STOP CODES (dừng vòng lặp ngay):
+    STOP_AUTH    = apikey sai (HTTP 401/403)
+    STOP_CONFIG  = thiếu apikey trong config
+    STOP_API     = API endpoint không tồn tại (HTTP 404)
+
+  STOP_EMPTY = hết acc → KHÔNG dừng ngay, mà retry tới MAX_EMPTY_RETRY lần
+
+  RETRY CODES (thử lại, tối đa MAX_ERROR_RETRY lần liên tiếp):
+    RETRY_NETWORK  = lỗi mạng tạm thời
+    RETRY_SERVER   = server lỗi (5xx)
+    RETRY_RATE     = rate limit (429)
+    RETRY_JSON     = API trả về JSON không hợp lệ
+    RETRY_UNKNOWN  = lỗi không xác định
+
+  CONTINUE = đã xử lý xong 1 account → RESET emptyRetryCount về 0
+
+  FAIL REASONS (upload vào result với status=failed):
+    - content rỗng / sai định dạng / thiếu email / thiếu password
+    - email không hợp lệ (thiếu @)
+    - mở trang login/apply lỗi
+    - gõ email/password/passcode lỗi
+    - bấm login/認証する lỗi
+    - không thấy trang passcode (sai password / tài khoản khóa)
+    - mail không tới / lỗi lấy code / thiếu email_forward/app_password
+    - apply item lỗi (detail/radio/checkbox/popup/applyBtn)
+]]

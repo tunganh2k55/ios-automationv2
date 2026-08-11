@@ -1,6 +1,6 @@
 {
   "name": "pokemontool",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "PokémonTool — quản lý & điều khiển reg Pokémon trên nhiều iPhone (WiFi/USB)",
   "author": "iosautos.com",
   "main": "main.js",
