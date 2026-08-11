@@ -41,11 +41,14 @@ static rfbScreenInfoPtr g_screen = NULL;
 static int g_ptr_mask = 0;   // nút trái RFB lần trước (theo dõi down→up); reset khi client ngắt
 
 // ===== VNC CALLBACKS =====
+static void vnc_client_gone(rfbClientPtr cl);   // forward-decl (gắn per-client trong newClientHook)
 
 // Client mới kết nối
 static enum rfbNewClientAction vnc_new_client(rfbClientPtr cl) {
     __sync_add_and_fetch(&g_client_count, 1);
     g_ptr_mask = 0;
+    // clientGoneHook là hook PER-CLIENT (rfbClientRec), KHÔNG phải per-screen → gắn tại đây.
+    cl->clientGoneHook = vnc_client_gone;
     log_msg("vnc: client kết nối, tổng %d", g_client_count);
     return RFB_CLIENT_ACCEPT;
 }
@@ -196,9 +199,8 @@ int vnc_init(int port, const char *password) {
     g_screen->port = g_port;
     g_screen->ipv6port = g_port;
 
-    // Callbacks
+    // Callbacks. clientGoneHook gắn per-client trong vnc_new_client (không có ở struct screen).
     g_screen->newClientHook = vnc_new_client;
-    g_screen->clientGoneHook = vnc_client_gone;   // BẮT BUỘC: nếu thiếu, g_client_count không giảm
     g_screen->ptrAddEvent = vnc_ptr_event;
     g_screen->kbdAddEvent = vnc_kbd_event;
 
