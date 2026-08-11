@@ -143,8 +143,8 @@ local function holdAirplane(secs)
     return true
 end
 
--- resetNetwork: TẮT/BẬT airplane để reset mạng — KHÔNG check IP, KHÔNG chờ mạng lên lại
--- Dùng sau khi lấy được acc mới để đổi IP nhanh
+-- resetNetwork: TẮT/BẬT airplane để reset mạng — chờ 10s cho mạng ổn định
+-- Dùng sau khi lấy được acc mới để đổi IP
 local function resetNetwork()
     if not readUse4g() then return end
     if type(setAirplane) ~= "function" then
@@ -157,8 +157,9 @@ local function resetNetwork()
         notify("Reset mạng lỗi: " .. tostring(err) .. " — bỏ qua", 3)
         return
     end
-    notify("Reset mạng: đã bật lại sóng", 2)
-    -- KHÔNG chờ mạng, KHÔNG check IP — tiếp tục ngay
+    notify("Reset mạng: đã bật lại sóng, chờ 10s...", 2)
+    sleep(10)  -- chờ mạng ổn định trước khi mở link
+    notify("Reset mạng: OK", 2)
 end
 
 -- ========== API FUNCTIONS ==========
