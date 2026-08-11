@@ -645,7 +645,7 @@ local function processOne(key, accountNum)
     local id = rec.id
     notify(string.format("[#%d] Claim OK: id=%s", accountNum, tostring(id)), 3)
 
-    -- Step 3: Parse content
+    -- Step 3: Parse content (format: email|password|email_forward|app_password)
     local content = tostring(rec.content or "")
 
     -- Case 3a: Content rỗng
@@ -656,8 +656,16 @@ local function processOne(key, accountNum)
         return "CONTINUE", rec
     end
 
-    -- Case 3b: Tách email|password
-    local email, password = content:match("^%s*(.-)%s*|%s*(.-)%s*$")
+    -- Case 3b: Tách 4 trường: email|password|email_forward|app_password
+    local parts = {}
+    for part in content:gmatch("[^|]+") do
+        table.insert(parts, trim(part))
+    end
+
+    local email = parts[1]
+    local password = parts[2]
+    -- parts[3] = email_forward (API dùng để đọc mail)
+    -- parts[4] = app_password (API dùng để đọc mail)
 
     if not email or email == "" then
         failReason = "content sai định dạng (thiếu email): " .. content:sub(1, 50)
