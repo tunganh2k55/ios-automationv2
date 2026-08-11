@@ -25,12 +25,16 @@ static int g_client_count = 0;
 static pthread_t g_capture_thread = 0;
 static int g_capture_stop = 0;
 
-// Framebuffer: double-buffer để update không block VNC read
-static void *g_front_buf = NULL;   // VNC đọc
-static void *g_back_buf = NULL;    // capture ghi
+// Framebuffer: 1 buffer duy nhất. libvncserver ĐỌC nó (encode gửi client), đồng thời nó là
+// THAM CHIẾU KHUNG TRƯỚC cho diff — band nào không đổi thì đã đúng sẵn, khỏi copy/gửi lại.
+static void *g_front_buf = NULL;
 static int g_fb_w = 0, g_fb_h = 0;
 static size_t g_fb_bpr = 0;
 static size_t g_fb_size = 0;
+
+// Dirty-rect: chia màn thành các DẢI ngang cao VNC_TILE_H pixel. Mỗi khung chỉ so sánh + copy +
+// mark những dải thay đổi → cắt cả CPU encode lẫn băng thông (màn tĩnh ≈ 0 traffic).
+#define VNC_TILE_H 32
 
 #ifdef HAVE_LIBVNCSERVER
 static rfbScreenInfoPtr g_screen = NULL;
@@ -106,9 +110,13 @@ static void vnc_kbd_event(rfbBool down, rfbKeySym keySym, rfbClientPtr cl) {
 
 // ===== CAPTURE THREAD =====
 // Thread liên tục capture framebuffer và update VNC khi có client kết nối.
+// ADAPTIVE FPS: khi màn hình đang đổi → ~30fps cho mượt; khi tĩnh → giãn dần xuống 10fps rồi 4fps
+// để không tốn CPU chụp/so sánh vô ích (dirty-rect báo 0 dải đổi).
 static void *vnc_capture_thread(void *arg) {
     (void)arg;
     log_msg("vnc: capture thread started");
+
+    int idle_frames = 0;
 
     while (!g_capture_stop) {
         // Chỉ capture khi có client
@@ -118,17 +126,25 @@ static void *vnc_capture_thread(void *arg) {
             int w = 0, h = 0;
             size_t bpr = 0;
 
+            int dirty = 0;
             int rc = fbcap_raw(&raw, &rawlen, &w, &h, &bpr);
             if (rc == 0 && raw) {
-                vnc_update_fb(raw, w, h, bpr);
-                vnc_mark_modified();
+                dirty = vnc_update_fb(raw, w, h, bpr);  // trả số dải thay đổi (đã tự mark)
                 free(raw);
             }
 
-            // ~30fps khi có client
-            usleep(33000);
+            if (dirty > 0) {
+                idle_frames = 0;
+                usleep(33000);             // ~30fps khi màn đang đổi
+            } else {
+                if (idle_frames < 1000) idle_frames++;
+                if (idle_frames > 30)      usleep(250000);  // >1s tĩnh → 4fps
+                else if (idle_frames > 8)  usleep(100000);  // tĩnh ngắn → 10fps
+                else                       usleep(33000);   // vừa mới đổi → vẫn 30fps
+            }
         } else {
             // Idle: check mỗi 500ms
+            idle_frames = 0;
             usleep(500000);
         }
     }
@@ -159,13 +175,10 @@ int vnc_init(int port, const char *password) {
     g_fb_bpr = (size_t)g_fb_w * 4;  // BGRA
     g_fb_size = g_fb_bpr * (size_t)g_fb_h;
 
-    // Alloc double buffer
+    // Alloc framebuffer (khởi tạo 0 → khung đầu tiên full-dirty, gửi trọn màn 1 lần).
     g_front_buf = calloc(1, g_fb_size);
-    g_back_buf = calloc(1, g_fb_size);
-    if (!g_front_buf || !g_back_buf) {
+    if (!g_front_buf) {
         log_msg("vnc: không đủ RAM cho framebuffer %dx%d", g_fb_w, g_fb_h);
-        free(g_front_buf); free(g_back_buf);
-        g_front_buf = g_back_buf = NULL;
         pthread_mutex_unlock(&g_vnc_mu);
         return -1;
     }
@@ -175,8 +188,7 @@ int vnc_init(int port, const char *password) {
     g_screen = rfbGetScreen(&argc, NULL, g_fb_w, g_fb_h, 8, 3, 4);
     if (!g_screen) {
         log_msg("vnc: rfbGetScreen thất bại");
-        free(g_front_buf); free(g_back_buf);
-        g_front_buf = g_back_buf = NULL;
+        free(g_front_buf); g_front_buf = NULL;
         pthread_mutex_unlock(&g_vnc_mu);
         return -2;
     }
@@ -254,7 +266,6 @@ void vnc_stop(void) {
 #endif
 
     free(g_front_buf); g_front_buf = NULL;
-    free(g_back_buf); g_back_buf = NULL;
     g_running = 0;
     g_client_count = 0;
 
@@ -266,56 +277,78 @@ int vnc_running(void) {
     return g_running;
 }
 
+// Cập nhật framebuffer bằng DIFF theo dải ngang. Trả về SỐ DẢI thay đổi (0 = màn tĩnh, không gửi gì).
+// g_front_buf giữ khung ĐÃ gửi (khung trước); ta so từng dải của khung mới với nó, chỉ dải nào khác
+// mới copy đè + rfbMarkRectAsModified → libvncserver chỉ encode/gửi đúng vùng đó.
 int vnc_update_fb(const void *data, int w, int h, size_t bpr) {
     if (!g_running || !data) return -1;
+
+    int dirty_bands = 0;
 
 #ifdef HAVE_LIBVNCSERVER
     pthread_mutex_lock(&g_vnc_mu);
 
-    // Resize nếu cần
+    // Resize nếu cần → cấp lại buffer, ép khung này full-dirty (memset 0 để mọi dải khác nguồn).
     if (w != g_fb_w || h != g_fb_h) {
         size_t new_bpr = (size_t)w * 4;
         size_t new_size = new_bpr * (size_t)h;
         void *new_front = realloc(g_front_buf, new_size);
-        void *new_back = realloc(g_back_buf, new_size);
-        if (new_front && new_back) {
+        if (new_front) {
             g_front_buf = new_front;
-            g_back_buf = new_back;
             g_fb_w = w;
             g_fb_h = h;
             g_fb_bpr = new_bpr;
             g_fb_size = new_size;
+            memset(g_front_buf, 0, new_size);
 
             rfbNewFramebuffer(g_screen, (char *)g_front_buf, w, h, 8, 3, 4);
             g_screen->paddedWidthInBytes = new_bpr;
         }
     }
 
-    // Copy vào back buffer
-    if (bpr == g_fb_bpr) {
-        memcpy(g_back_buf, data, g_fb_size);
-    } else {
-        // Row-by-row copy (stride khác nhau)
-        size_t copy_w = (bpr < g_fb_bpr) ? bpr : g_fb_bpr;
-        for (int y = 0; y < h && y < g_fb_h; y++) {
-            memcpy((char *)g_back_buf + y * g_fb_bpr,
-                   (const char *)data + y * bpr,
-                   copy_w);
-        }
-    }
+    const unsigned char *src = (const unsigned char *)data;
+    unsigned char *front = (unsigned char *)g_front_buf;
+    size_t row_bytes = (bpr < g_fb_bpr) ? bpr : g_fb_bpr;  // stride nguồn có thể lớn hơn (padding)
+    int same_stride = (bpr == g_fb_bpr);
 
-    // Swap front/back
-    void *tmp = g_front_buf;
-    g_front_buf = g_back_buf;
-    g_back_buf = tmp;
-    g_screen->frameBuffer = (char *)g_front_buf;
+    for (int y0 = 0; y0 < g_fb_h; y0 += VNC_TILE_H) {
+        int y1 = y0 + VNC_TILE_H;
+        if (y1 > g_fb_h) y1 = g_fb_h;
+
+        // So sánh dải [y0,y1).
+        int changed = 0;
+        if (same_stride) {
+            size_t off = (size_t)y0 * g_fb_bpr;
+            size_t len = (size_t)(y1 - y0) * g_fb_bpr;
+            changed = (memcmp(src + off, front + off, len) != 0);
+        } else {
+            for (int y = y0; y < y1 && !changed; y++) {
+                if (memcmp(src + (size_t)y * bpr, front + (size_t)y * g_fb_bpr, row_bytes) != 0)
+                    changed = 1;
+            }
+        }
+        if (!changed) continue;
+
+        // Copy dải mới đè lên front rồi mark đúng vùng đó.
+        if (same_stride) {
+            size_t off = (size_t)y0 * g_fb_bpr;
+            memcpy(front + off, src + off, (size_t)(y1 - y0) * g_fb_bpr);
+        } else {
+            for (int y = y0; y < y1; y++)
+                memcpy(front + (size_t)y * g_fb_bpr, src + (size_t)y * bpr, row_bytes);
+        }
+        rfbMarkRectAsModified(g_screen, 0, y0, g_fb_w, y1);
+        dirty_bands++;
+    }
 
     pthread_mutex_unlock(&g_vnc_mu);
 #endif
 
-    return 0;
+    return dirty_bands;
 }
 
+// GIỮ cho tương thích API — mark toàn màn (ép gửi lại trọn khung). Capture loop KHÔNG còn dùng
+// (dirty-rect tự mark trong vnc_update_fb); chỉ gọi khi cần buộc refresh thủ công.
 void vnc_mark_modified(void) {
 #ifdef HAVE_LIBVNCSERVER
     if (g_running && g_screen) {

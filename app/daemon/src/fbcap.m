@@ -278,9 +278,7 @@ int fbcap_jpeg_isolated(unsigned char **outbuf, size_t *outlen, double scale, in
 // ===== RAW FRAMEBUFFER (cho VNC) =====
 // Chụp framebuffer → raw BGRA buffer (không encode). Dùng cho VNC server.
 int fbcap_raw(unsigned char **outbuf, size_t *outlen, int *out_w, int *out_h, size_t *out_bpr) {
-    // Dùng chung cơ chế với fbcap_jpeg, nhưng không encode.
-    // Luôn chụp biệt lập để tránh crash daemon.
-    // NOTE: Đây là implementation đơn giản, sau có thể tối ưu bằng cách chia sẻ IOSurface.
+    // Dùng chung cơ chế với fbcap_jpeg, nhưng không encode. Chụp IN-PROCESS (VNC dùng trên máy đủ RAM).
 
     load_syms();
     if (!pRender) return 10;
@@ -294,20 +292,27 @@ int fbcap_raw(unsigned char **outbuf, size_t *outlen, int *out_w, int *out_h, si
 
     pthread_mutex_lock(&g_fb_mu);
 
-    // Tạo surface tạm
-    IOSurfaceRef src = make_surface(W, H);
-    if (!src) {
+    // Surface TÁI DÙNG giữa các frame (VNC gọi ~30fps): tạo/hủy mỗi lần gây alloc/free churn +
+    // tăng áp lực jetsam. Giữ tĩnh, chỉ cấp lại khi kích thước màn đổi (xoay ngang/dọc).
+    static IOSurfaceRef s_src = NULL;
+    static size_t s_W = 0, s_H = 0;
+    if (!s_src || s_W != W || s_H != H) {
+        if (s_src) { CFRelease(s_src); s_src = NULL; }
+        s_src = make_surface(W, H);
+        s_W = W; s_H = H;
+    }
+    if (!s_src) {
         pthread_mutex_unlock(&g_fb_mu);
         return 11;
     }
 
     // Render
-    pRender(0, CFSTR("LCD"), src, 0, 0);
+    pRender(0, CFSTR("LCD"), s_src, 0, 0);
 
     // Lock và copy raw data
-    IOSurfaceLock(src, kIOSurfaceLockReadOnly, NULL);
-    void *base = IOSurfaceGetBaseAddress(src);
-    size_t bpr = IOSurfaceGetBytesPerRow(src);
+    IOSurfaceLock(s_src, kIOSurfaceLockReadOnly, NULL);
+    void *base = IOSurfaceGetBaseAddress(s_src);
+    size_t bpr = IOSurfaceGetBytesPerRow(s_src);
     size_t total = bpr * H;
 
     unsigned char *buf = malloc(total);
@@ -315,8 +320,7 @@ int fbcap_raw(unsigned char **outbuf, size_t *outlen, int *out_w, int *out_h, si
         memcpy(buf, base, total);
     }
 
-    IOSurfaceUnlock(src, kIOSurfaceLockReadOnly, NULL);
-    CFRelease(src);
+    IOSurfaceUnlock(s_src, kIOSurfaceLockReadOnly, NULL);
 
     pthread_mutex_unlock(&g_fb_mu);
 

@@ -132,15 +132,26 @@ static void *proxy_thread(void *arg) {
 
     fd_set rfds;
     int maxfd = (ws_fd > vnc_fd) ? ws_fd : vnc_fd;
+    int idle_ticks = 0;  // số lần select hết giờ liên tiếp (không có traffic 2 chiều)
 
     while (1) {
         FD_ZERO(&rfds);
         FD_SET(ws_fd, &rfds);
         FD_SET(vnc_fd, &rfds);
 
-        struct timeval tv = { .tv_sec = 60, .tv_usec = 0 };
+        // 30s: sau dirty-rect, màn tĩnh KHÔNG sinh traffic RFB → không được coi timeout là "chết"
+        // mà phải gửi WS ping giữ kết nối (nếu không noVNC bị rớt khi để yên màn hình).
+        struct timeval tv = { .tv_sec = 30, .tv_usec = 0 };
         int ret = select(maxfd + 1, &rfds, NULL, NULL, &tv);
-        if (ret <= 0) break;  // timeout hoặc lỗi
+        if (ret < 0) break;  // lỗi socket
+        if (ret == 0) {
+            // Idle: ping giữ sống (opcode 0x9, payload rỗng). Client trả pong (ta bỏ qua).
+            unsigned char ping[2] = { 0x89, 0x00 };
+            if (send(ws_fd, ping, 2, 0) != 2) break;
+            if (++idle_ticks > 20) break;  // ~10 phút im lặng hoàn toàn → đóng, tránh rò socket chết
+            continue;
+        }
+        idle_ticks = 0;
 
         // WS → VNC
         if (FD_ISSET(ws_fd, &rfds)) {
@@ -225,6 +236,15 @@ int vnc_ws_handle_upgrade(int client_fd, const char *headers) {
     char accept[64];
     ws_accept_key(key, accept, sizeof(accept));
 
+    // noVNC yêu cầu subprotocol "binary" — nếu client có gửi thì PHẢI echo lại, không thì một số
+    // bản noVNC báo lỗi handshake và không mở được kết nối.
+    const char *proto_hdr = "";
+    {
+        const char *p = strcasestr(headers, "Sec-WebSocket-Protocol:");
+        if (p && strcasestr(p, "binary"))
+            proto_hdr = "Sec-WebSocket-Protocol: binary\r\n";
+    }
+
     // Kết nối tới VNC server
     int vnc_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (vnc_fd < 0) {
@@ -251,8 +271,9 @@ int vnc_ws_handle_upgrade(int client_fd, const char *headers) {
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         "Sec-WebSocket-Accept: %s\r\n"
+        "%s"
         "\r\n",
-        accept);
+        accept, proto_hdr);
 
     if (send(client_fd, response, (size_t)rlen, 0) != rlen) {
         log_msg("vnc_ws: không gửi được handshake response");

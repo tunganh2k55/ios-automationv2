@@ -20,12 +20,12 @@ void vnc_stop(void);
 // Đang chạy?
 int vnc_running(void);
 
-// Cập nhật framebuffer từ IOSurface (gọi từ capture loop).
+// Cập nhật framebuffer từ IOSurface (gọi từ capture loop). Diff theo dải ngang, chỉ mark vùng đổi.
 // data: con trỏ BGRA buffer, w/h: kích thước pixel, bpr: bytes per row.
-// Trả 0 nếu OK.
+// Trả về SỐ DẢI thay đổi (>=0), <0 nếu lỗi. 0 = màn tĩnh (không gửi gì cho client).
 int vnc_update_fb(const void *data, int w, int h, size_t bpr);
 
-// Đánh dấu toàn màn đã thay đổi (sau mỗi capture).
+// Ép mark toàn màn (buộc gửi lại trọn khung). Capture loop KHÔNG dùng — dirty-rect tự mark.
 void vnc_mark_modified(void);
 
 // Số client đang kết nối.
