@@ -38,65 +38,57 @@ static size_t g_fb_size = 0;
 
 #ifdef HAVE_LIBVNCSERVER
 static rfbScreenInfoPtr g_screen = NULL;
+static int g_ptr_mask = 0;   // nút trái RFB lần trước (theo dõi down→up); reset khi client ngắt
 
 // ===== VNC CALLBACKS =====
 
 // Client mới kết nối
 static enum rfbNewClientAction vnc_new_client(rfbClientPtr cl) {
     __sync_add_and_fetch(&g_client_count, 1);
+    g_ptr_mask = 0;
     log_msg("vnc: client kết nối, tổng %d", g_client_count);
     return RFB_CLIENT_ACCEPT;
 }
 
 // Client ngắt kết nối
 static void vnc_client_gone(rfbClientPtr cl) {
-    __sync_sub_and_fetch(&g_client_count, 1);
+    int n = __sync_sub_and_fetch(&g_client_count, 1);
+    if (n < 0) __sync_bool_compare_and_swap(&g_client_count, n, 0);
+    g_ptr_mask = 0;   // tránh client sau bị kẹt "đang nhấn"
     log_msg("vnc: client ngắt, còn %d", g_client_count);
 }
 
-// Pointer event (mouse/touch từ VNC client)
+// Pointer event (mouse/touch từ VNC client) → map sang touch layer (PTR realtime).
 static void vnc_ptr_event(int buttonMask, int x, int y, rfbClientPtr cl) {
-    // Map VNC coordinates → iOS point coordinates
-    // VNC coords = pixel, iOS touch = point (divide by scale factor)
     int pw = 0, ph = 0;
     touch_screen_size(&pw, &ph);
     if (pw <= 0 || ph <= 0) { pw = 390; ph = 844; }
 
-    // Giả sử @2x scale
-    int scale = 2;
-    if (g_fb_w > 0 && pw > 0) {
-        scale = g_fb_w / pw;
-        if (scale < 1) scale = 1;
-        if (scale > 3) scale = 3;
-    }
-
-    int tx = x / scale;
-    int ty = y / scale;
-
-    // State tracking per-client
-    static int lastMask = 0;
+    // noVNC gửi toạ độ theo PIXEL của framebuffer (g_fb_w×g_fb_h). Map pixel→point theo TỈ LỆ THỰC
+    // (không giả định @2x — máy khác scale khác), rồi kẹp trong màn. Trước đây dùng chia nguyên
+    // g_fb_w/pw → ra scale=1 trên vài máy → toạ độ lệch gấp đôi, tap rơi ngoài màn.
+    int fbw = g_fb_w > 0 ? g_fb_w : pw;
+    int fbh = g_fb_h > 0 ? g_fb_h : ph;
+    int tx = (int)((long long)x * pw / fbw);
+    int ty = (int)((long long)y * ph / fbh);
+    if (tx < 0) tx = 0; else if (tx > pw - 1) tx = pw - 1;
+    if (ty < 0) ty = 0; else if (ty > ph - 1) ty = ph - 1;
 
     int leftNow = (buttonMask & 1) != 0;
-    int leftPrev = (lastMask & 1) != 0;
+    int leftPrev = (g_ptr_mask & 1) != 0;
+    g_ptr_mask = buttonMask;
 
     char err[128] = {0};
-
     if (leftNow && !leftPrev) {
-        // Touch down
-        touch_pointer('d', tx, ty, err, sizeof(err));
+        int rc = touch_pointer('d', tx, ty, err, sizeof(err));
+        log_msg("vnc: PTR down pt(%d,%d) px(%d,%d) fb=%dx%d rc=%d %s", tx, ty, x, y, fbw, fbh, rc, err);
     } else if (!leftNow && leftPrev) {
-        // Touch up
-        touch_pointer('u', tx, ty, err, sizeof(err));
+        int rc = touch_pointer('u', tx, ty, err, sizeof(err));
+        log_msg("vnc: PTR up   pt(%d,%d) rc=%d %s", tx, ty, rc, err);
     } else if (leftNow) {
-        // Touch move
-        touch_pointer('m', tx, ty, err, sizeof(err));
+        touch_pointer('m', tx, ty, err, sizeof(err));   // moves: không log (tần suất cao)
     }
-
-    // Middle button = power (nếu cần)
-    // Right button = home (nếu cần)
-    // TODO: implement khi có HID layer
-
-    lastMask = buttonMask;
+    // Middle/Right button (power/home) → TODO khi có HID layer.
 }
 
 // Keyboard event (từ VNC client)
@@ -206,6 +198,7 @@ int vnc_init(int port, const char *password) {
 
     // Callbacks
     g_screen->newClientHook = vnc_new_client;
+    g_screen->clientGoneHook = vnc_client_gone;   // BẮT BUỘC: nếu thiếu, g_client_count không giảm
     g_screen->ptrAddEvent = vnc_ptr_event;
     g_screen->kbdAddEvent = vnc_kbd_event;
 
