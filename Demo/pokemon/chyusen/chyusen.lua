@@ -143,34 +143,22 @@ local function holdAirplane(secs)
     return true
 end
 
-local function cycle4g()
+-- resetNetwork: TẮT/BẬT airplane để reset mạng — KHÔNG check IP, KHÔNG chờ mạng lên lại
+-- Dùng sau khi lấy được acc mới để đổi IP nhanh
+local function resetNetwork()
     if not readUse4g() then return end
     if type(setAirplane) ~= "function" then
         notify("use4g BẬT nhưng daemon chưa hỗ trợ setAirplane — bỏ qua", 3)
         return
     end
-    local oldIp = getIpWait(C4G_NET_WAIT)
-    notify("Đổi 4G: IP hiện tại " .. tostring(oldIp or "?"), 2)
-    for attempt = 1, C4G_IP_MAX_TRY do
-        notify(string.format("Đổi 4G (lần %d/%d): ngắt sóng %ds...", attempt, C4G_IP_MAX_TRY, C4G_OFF_SECONDS), 2)
-        local ok, err = holdAirplane(C4G_OFF_SECONDS)
-        if not ok then
-            notify("Đổi 4G lỗi: " .. tostring(err) .. " — bỏ qua", 3)
-            return
-        end
-        notify("Đổi 4G: đã bật lại sóng, chờ mạng...", 2)
-        local newIp = getIpWait(C4G_NET_WAIT)
-        if not newIp then
-            notify("Đổi 4G: mạng chưa lên lại sau " .. C4G_NET_WAIT .. "s", 3)
-        elseif not oldIp or newIp ~= oldIp then
-            notify("Đổi 4G OK - IP mới: " .. newIp, 3)
-            return
-        else
-            notify(string.format("Đổi 4G: IP chưa đổi (%s)%s", newIp, attempt < C4G_IP_MAX_TRY and " — thử lại" or ""), 3)
-            oldIp = newIp
-        end
+    notify("Reset mạng: ngắt sóng " .. C4G_OFF_SECONDS .. "s...", 2)
+    local ok, err = holdAirplane(C4G_OFF_SECONDS)
+    if not ok then
+        notify("Reset mạng lỗi: " .. tostring(err) .. " — bỏ qua", 3)
+        return
     end
-    notify("Đổi 4G: thử " .. C4G_IP_MAX_TRY .. " lần chưa đổi được IP — vẫn tiếp tục", 3)
+    notify("Reset mạng: đã bật lại sóng", 2)
+    -- KHÔNG chờ mạng, KHÔNG check IP — tiếp tục ngay
 end
 
 -- ========== API FUNCTIONS ==========
@@ -602,8 +590,12 @@ local function processOne(key, accountNum)
     local rec, code, errCode, errMsg
     local failReason = nil
 
-    -- Step 1: Đổi IP 4G
-    cycle4g()
+    -- Step 1: Clear Safari TRƯỚC (để không dính session cũ)
+    notify("[#" .. accountNum .. "] Clear Safari...", 2)
+    local okClear, clearDiag = clearSafari()
+    if not okClear then
+        notify("[#" .. accountNum .. "] Clear Safari lỗi: " .. tostring(clearDiag) .. " — vẫn tiếp tục", 2)
+    end
 
     -- Step 2: Claim 1 dòng
     notify(string.format("[#%d] Đang lấy dòng chyusen (type=%s)...", accountNum, CHYUSEN_TYPE), 3)
@@ -645,7 +637,10 @@ local function processOne(key, accountNum)
     local id = rec.id
     notify(string.format("[#%d] Claim OK: id=%s", accountNum, tostring(id)), 3)
 
-    -- Step 3: Parse content (format: email|password|email_forward|app_password)
+    -- Step 3: Reset mạng (có acc mới → đổi IP nhanh, không check, không chờ)
+    resetNetwork()
+
+    -- Step 4: Parse content (format: email|password|email_forward|app_password)
     local content = tostring(rec.content or "")
 
     -- Case 3a: Content rỗng
@@ -690,14 +685,6 @@ local function processOne(key, accountNum)
     end
 
     notify(string.format("[#%d] Account: %s", accountNum, email), 3)
-
-    -- Step 4: Clear Safari
-    local okClear, clearDiag = clearSafari()
-    if not okClear then
-        notify("[#" .. accountNum .. "] Clear Safari lỗi: " .. tostring(clearDiag) .. " — vẫn thử tiếp", 2)
-        -- Không fail, vẫn thử login (có thể Safari đã sạch)
-    end
-    sleep(1)
 
     -- Step 5: Mở trang login
     notify("[#" .. accountNum .. "] Mở trang login...", 3)
