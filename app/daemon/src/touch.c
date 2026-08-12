@@ -593,15 +593,17 @@ int touch_safari_click(const char *field, char *reply, size_t rlen) {
         return 1;
     }
 
-    log_msg("safari.click: coord %.0f,%.0f → sthid_tap", x, y);
+    log_msg("safari.click: coord %.0f,%.0f → IATap (tweak)", x, y);
 
-    if (!sthid_available()) {
-        snprintf(reply, rlen, "ERR STHIDEventGenerator không sẵn sàng");
+    // Dùng touch_tap (route qua tweak IATap) thay vì sthid_tap
+    // IATap có xử lý web đặc biệt (hook WKWebView, JS click fallback)
+    char tap_err[128] = {0};
+    int tap_rc = touch_tap((int)x, (int)y, tap_err, sizeof(tap_err));
+    if (tap_rc != 0) {
+        snprintf(reply, rlen, "ERR tap: %s", tap_err[0] ? tap_err : "unknown");
         return 1;
     }
-
-    sthid_tap(x, y);
-    snprintf(reply, rlen, "OK webclick %.0f,%.0f (HID)", x, y);
+    snprintf(reply, rlen, "OK webclick %.0f,%.0f (IATap)", x, y);
     return 0;
 }
 
