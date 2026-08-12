@@ -1,8 +1,16 @@
 #!/bin/sh
-# iOSAuto (gói gộp): CHỈ khởi động daemon. Icon app do trigger uikittools của dpkg tự đăng ký
-# (uicache) — KHÔNG gọi uicache ở đây (uicache -a rất chậm, dễ treo dpkg → daemon không lên).
+# iOSAuto postinst: khởi động daemon + đăng ký app icon
 PLIST=/var/jb/Library/LaunchDaemons/com.iosauto.daemon.plist
+APP=/var/jb/Applications/iOSAutoApp.app
+
+# Khởi động daemon
 /var/jb/bin/launchctl bootstrap system "$PLIST" 2>/dev/null
 /var/jb/bin/launchctl enable system/com.iosauto.daemon 2>/dev/null
 /var/jb/bin/launchctl kickstart -k system/com.iosauto.daemon 2>/dev/null
+
+# Đăng ký app icon (uicache)
+if [ -d "$APP" ]; then
+    /var/jb/usr/bin/uicache -p "$APP" 2>/dev/null || true
+fi
+
 exit 0

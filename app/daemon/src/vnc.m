@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <math.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -24,6 +26,12 @@ static int g_port = 5900;
 static int g_client_count = 0;
 static pthread_t g_capture_thread = 0;
 static int g_capture_stop = 0;
+
+// VNC pointer state: lưu vị trí + thời điểm DOWN để quyết định tap vs swipe khi UP.
+// Đây là fallback test — sau này port TrollVNC input implementation thực sự.
+static int g_vnc_down_x = 0, g_vnc_down_y = 0;
+static int g_vnc_last_x = 0, g_vnc_last_y = 0;
+static uint64_t g_vnc_down_time = 0;   // mach_absolute_time hoặc clock_gettime
 
 // Framebuffer: 1 buffer duy nhất. libvncserver ĐỌC nó (encode gửi client), đồng thời nó là
 // THAM CHIẾU KHUNG TRƯỚC cho diff — band nào không đổi thì đã đúng sẵn, khỏi copy/gửi lại.
@@ -61,15 +69,29 @@ static void vnc_client_gone(rfbClientPtr cl) {
     log_msg("vnc: client ngắt, còn %d", g_client_count);
 }
 
-// Pointer event (mouse/touch từ VNC client) → map sang touch layer (PTR realtime).
+// Lấy timestamp ms hiện tại (monotonic).
+static uint64_t vnc_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+// Pointer event (mouse/touch từ VNC client).
+// FALLBACK TEST: route sang IATap/IASwipe để chứng minh VNC pipeline hoạt động.
+// Sau khi xác nhận tap/swipe chạy, thay lớp này bằng TrollVNC input implementation.
+//
+// Logic:
+//   DOWN → lưu x0,y0,time
+//   MOVE → lưu x,y cuối
+//   UP   → distance < 8px => IATap(x,y)
+//          else           => IASwipe(x0,y0,x,y,duration)
 static void vnc_ptr_event(int buttonMask, int x, int y, rfbClientPtr cl) {
     int pw = 0, ph = 0;
     touch_screen_size(&pw, &ph);
     if (pw <= 0 || ph <= 0) { pw = 390; ph = 844; }
 
     // noVNC gửi toạ độ theo PIXEL của framebuffer (g_fb_w×g_fb_h). Map pixel→point theo TỈ LỆ THỰC
-    // (không giả định @2x — máy khác scale khác), rồi kẹp trong màn. Trước đây dùng chia nguyên
-    // g_fb_w/pw → ra scale=1 trên vài máy → toạ độ lệch gấp đôi, tap rơi ngoài màn.
+    // (không giả định @2x — máy khác scale khác), rồi kẹp trong màn.
     int fbw = g_fb_w > 0 ? g_fb_w : pw;
     int fbh = g_fb_h > 0 ? g_fb_h : ph;
     int tx = (int)((long long)x * pw / fbw);
@@ -83,15 +105,39 @@ static void vnc_ptr_event(int buttonMask, int x, int y, rfbClientPtr cl) {
 
     char err[128] = {0};
     if (leftNow && !leftPrev) {
-        int rc = touch_pointer('d', tx, ty, err, sizeof(err));
-        log_msg("vnc: PTR down pt(%d,%d) px(%d,%d) fb=%dx%d rc=%d %s", tx, ty, x, y, fbw, fbh, rc, err);
+        // DOWN: lưu vị trí + thời điểm bắt đầu
+        g_vnc_down_x = tx;
+        g_vnc_down_y = ty;
+        g_vnc_last_x = tx;
+        g_vnc_last_y = ty;
+        g_vnc_down_time = vnc_now_ms();
+        log_msg("vnc: DOWN pt(%d,%d) px(%d,%d) fb=%dx%d", tx, ty, x, y, fbw, fbh);
     } else if (!leftNow && leftPrev) {
-        int rc = touch_pointer('u', tx, ty, err, sizeof(err));
-        log_msg("vnc: PTR up   pt(%d,%d) rc=%d %s", tx, ty, rc, err);
+        // UP: quyết định tap hay swipe dựa trên distance
+        int dx = g_vnc_last_x - g_vnc_down_x;
+        int dy = g_vnc_last_y - g_vnc_down_y;
+        int dist = (int)sqrt((double)(dx*dx + dy*dy));
+        uint64_t dur_ms = vnc_now_ms() - g_vnc_down_time;
+        double dur_sec = dur_ms / 1000.0;
+        if (dur_sec < 0.1) dur_sec = 0.1;   // tối thiểu 100ms cho swipe
+        if (dur_sec > 2.0) dur_sec = 2.0;   // tối đa 2s
+
+        if (dist < 8) {
+            // Tap: di chuyển ít, coi như click
+            int rc = touch_tap(g_vnc_last_x, g_vnc_last_y, err, sizeof(err));
+            log_msg("vnc: UP → TAP pt(%d,%d) dist=%d rc=%d %s", g_vnc_last_x, g_vnc_last_y, dist, rc, err);
+        } else {
+            // Swipe: di chuyển đủ xa
+            int rc = touch_swipe(g_vnc_down_x, g_vnc_down_y, g_vnc_last_x, g_vnc_last_y, dur_sec, err, sizeof(err));
+            log_msg("vnc: UP → SWIPE (%d,%d)→(%d,%d) dist=%d dur=%.2fs rc=%d %s",
+                    g_vnc_down_x, g_vnc_down_y, g_vnc_last_x, g_vnc_last_y, dist, dur_sec, rc, err);
+        }
     } else if (leftNow) {
-        touch_pointer('m', tx, ty, err, sizeof(err));   // moves: không log (tần suất cao)
+        // MOVE: cập nhật vị trí cuối (không log để tránh spam)
+        g_vnc_last_x = tx;
+        g_vnc_last_y = ty;
     }
-    // Middle/Right button (power/home) → TODO khi có HID layer.
+    // Middle/Right button (power/home) → TODO khi có TrollVNC HID layer.
 }
 
 // Keyboard event (từ VNC client)
