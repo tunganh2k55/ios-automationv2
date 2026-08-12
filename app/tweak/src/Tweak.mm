@@ -1898,7 +1898,7 @@ static NSString *IAWebFill(NSString *b64field, NSString *b64value) {
                 "var hay=[e.placeholder,e.name,e.id,e.type,e.getAttribute('aria-label'),e.getAttribute('autocomplete'),lab].join(' ').toLowerCase();"
                 "if(hay.indexOf(f)>=0){el=e;break;}}}"
                 "if(!el)return 'noel';"
-                "el.scrollIntoView({block:'center',inline:'center'});"                     // tự cuộn tới ô (nếu ngoài màn) trước khi điền
+                "el.scrollIntoView({block:'nearest',inline:'nearest'});"                     // tự cuộn tới ô (nếu ngoài màn) trước khi điền
                 "el.focus();"
                 "if(el.tagName==='SELECT'){"                                              // <select>: chọn option theo value → text
                 "var os=el.options,opt=null;"
@@ -1995,7 +1995,7 @@ static NSString *IAWebType(NSString *b64field, NSString *b64value) {
         "var hay=[e.placeholder,e.name,e.id,e.type,e.getAttribute('aria-label'),e.getAttribute('autocomplete'),lab].join(' ').toLowerCase();"
         "if(hay.indexOf(f)>=0){el=e;break;}}}"
         "if(!el)return 'noel';"
-        "el.scrollIntoView({block:'center',inline:'center'});"
+        "el.scrollIntoView({block:'nearest',inline:'nearest'});"
         "el.focus();"
         "if(el.tagName==='SELECT'){"                                              // <select>: gõ vô nghĩa → chọn option
         "var os=el.options,opt=null;"
@@ -2071,7 +2071,7 @@ static NSString *IAWebType(NSString *b64field, NSString *b64value) {
 // safari.swipe (ẨN): cuộn (scroll) trong WKWebView tới element web khớp `field` — dùng khi element
 // nằm ngoài màn (phải kéo tới mới bấm/điền được). field khớp GIỐNG safari.fill: CSS selector HOẶC
 // chuỗi khớp text/placeholder/name/id/aria-label/label (không phân biệt hoa/thường). Gọi
-// scrollIntoView({block:'center'}) → element ra GIỮA màn. b64field: base64 (JS tự giải mã UTF-8).
+// scrollIntoView({block:'nearest'}) → chỉ scroll nếu element ngoài viewport. b64field: base64 (JS tự giải mã UTF-8).
 static NSString *IAWebScrollTo(NSString *b64field) {
     if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
         return @"ERR webswipe: cần app foreground (không phải màn hình chính)";
@@ -2101,7 +2101,7 @@ static NSString *IAWebScrollTo(NSString *b64field) {
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
                 "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];break;}}}"
                 "if(!el)return 'noel';"
-                "el.scrollIntoView({block:'center',inline:'center'});"
+                "el.scrollIntoView({block:'nearest',inline:'nearest'});"
                 "var r=el.getBoundingClientRect();"
                 "return 'ok '+Math.round(r.left+r.width/2)+','+Math.round(r.top+r.height/2);"
                 "})('%@')", b64field];
@@ -2152,7 +2152,7 @@ static NSString *IAWebCoord(NSString *b64field) {
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
                 "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];break;}}}"
                 "if(!el)return 'noel';"
-                "el.scrollIntoView({block:'center',inline:'center'});"
+                "el.scrollIntoView({block:'nearest',inline:'nearest'});"
                 "var r=el.getBoundingClientRect();var cx=r.left+r.width/2,cy=r.top+r.height/2;"
                 "return 'vp '+Math.round(cx)+','+Math.round(cy);"
                 "})('%@')", b64field];
@@ -2227,7 +2227,7 @@ static NSString *IAWebClick(NSString *b64field) {
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
                 "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];console.log('[IAWebClick] found by text');break;}}}"
                 "if(!el){console.log('[IAWebClick] noel');return 'noel';}"
-                "el.scrollIntoView({block:'center',inline:'center'});"
+                "el.scrollIntoView({block:'nearest',inline:'nearest'});"
                 "var r=el.getBoundingClientRect();var cx=r.left+r.width/2,cy=r.top+r.height/2;"
                 "console.log('[IAWebClick] rect='+JSON.stringify(r)+' center='+cx+','+cy);"
                 "return 'coord '+Math.round(cx)+','+Math.round(cy);"
