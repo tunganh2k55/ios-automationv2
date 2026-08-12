@@ -13,6 +13,13 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <signal.h>    // kill(pid, SIGKILL) — giết tiến trình WebKit theo PID
+// libproc.h KHÔNG có trong iOS SDK (Theos) → khai báo tay proc_pidpath (vẫn nằm trong libSystem,
+// link mặc định) + hằng kích thước buffer, thay cho #include <libproc.h>.
+extern int proc_pidpath(int pid, void *buffer, uint32_t buffersize);
+#ifndef PROC_PIDPATHINFO_MAXSIZE
+#define PROC_PIDPATHINFO_MAXSIZE (4 * 1024)
+#endif
 #include "lslock.h"   // ia_ls_lock/unlock — serialize MỌI truy cập LaunchServices toàn daemon
 
 // Tên thiết bị tuỳ chỉnh do người dùng đặt (từ app/web). Rỗng/không có → dùng hostname (bỏ .local).
@@ -146,6 +153,18 @@ static int killall_signal(const char *exe, const char *sig) {
     return -1;
 }
 
+// Kill CỨNG 1 exe theo TÊN tiến trình (SIGKILL) + ĐỢI chết hẳn (tối đa ~2s). Lõi dùng chung cho
+// cả app (qua bundleId → exe) lẫn tiến trình phụ trợ WebKit (không phải app, không có LSProxy).
+static void kill_exe_hard_wait(const char *e) {
+    if (!e || !e[0]) return;
+    killall_signal(e, "-9");
+    for (int i = 0; i < 20; i++) {              // ~2s: 20 × 100ms
+        if (killall_signal(e, "-0") != 0) return;   // !=0 → không còn tiến trình → xong
+        usleep(100 * 1000);
+        killall_signal(e, "-9");                // còn sống → nện tiếp
+    }
+}
+
 // Kill CỨNG (SIGKILL) + ĐỢI tiến trình chết hẳn (tối đa ~2s) trước khi ta xoá dữ liệu.
 // Vì sao KHÔNG dùng SIGTERM: app (nhất là Safari) bắt SIGTERM → chạy applicationWillTerminate
 // → GHI LẠI trạng thái (BrowserState.db = tab+lịch sử) NGAY lúc thoát → ghi đè lên phần ta vừa
@@ -154,12 +173,49 @@ static int killall_signal(const char *exe, const char *sig) {
 static void kill_hard_wait(NSString *bundleId) {
     NSString *exe = executable_name_for(bundleId);
     if (!exe.length) return;
-    const char *e = exe.UTF8String;
-    killall_signal(e, "-9");
-    for (int i = 0; i < 20; i++) {              // ~2s: 20 × 100ms
-        if (killall_signal(e, "-0") != 0) return;   // !=0 → không còn tiến trình → xong
+    kill_exe_hard_wait(exe.UTF8String);
+}
+
+// Giết CỨNG mọi tiến trình có đường dẫn executable chứa `needle` (SIGKILL theo PID). 1 lượt quét
+// KERN_PROC_ALL. Trả số PID đã bắn tín hiệu. Vì sao KHÔNG dùng killall: killall khớp theo p_comm bị
+// CẮT còn ~16 ký tự → "com.apple.WebKit.Networking"/".WebContent"/".GPU" đều cụt thành cùng 1 chuỗi,
+// tên đầy đủ không khớp → giết hụt. Khớp theo proc_pidpath (đường dẫn đầy đủ) mới chắc.
+static int kill_procs_matching(const char *needle) {
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0 };
+    size_t len = 0;
+    if (sysctl(mib, 4, NULL, &len, NULL, 0) != 0 || len == 0) return 0;
+    // Xin dư 1 chút phòng số tiến trình tăng giữa 2 lần gọi sysctl.
+    len += len / 8 + sizeof(struct kinfo_proc);
+    struct kinfo_proc *procs = (struct kinfo_proc *)malloc(len);
+    if (!procs) return 0;
+    if (sysctl(mib, 4, procs, &len, NULL, 0) != 0) { free(procs); return 0; }
+    int count = (int)(len / sizeof(struct kinfo_proc));
+    int killed = 0;
+    char path[PROC_PIDPATHINFO_MAXSIZE];
+    for (int i = 0; i < count; i++) {
+        pid_t pid = procs[i].kp_proc.p_pid;
+        if (pid <= 1) continue;
+        if (proc_pidpath(pid, path, sizeof(path)) <= 0) continue;
+        if (strstr(path, needle)) {
+            if (kill(pid, SIGKILL) == 0) killed++;
+        }
+    }
+    free(procs);
+    return killed;
+}
+
+// Safari đẩy cookie/website-data qua các tiến trình WebKit CHẠY RIÊNG (ngoài MobileSafari):
+//   com.apple.WebKit.Networking  → GIỮ cookie store / session trong RAM (NSURLSession)
+//   com.apple.WebKit.WebContent  → giữ localStorage / sessionStorage / state trang
+//   com.apple.WebKit.GPU         → phụ trợ render
+// Nếu CHỈ kill MobileSafari rồi xoá file, tiến trình Networking còn sống vẫn giữ cookie cũ trong RAM
+// và FLUSH GHI ĐÈ lại xuống đĩa khi Safari mở lại → cookie/session "sống lại" (xoá KHÔNG SẠCH).
+// Giết CỨNG mọi tiến trình com.apple.WebKit.* (theo PID) rồi đợi chúng chết hẳn (~2s) TRƯỚC khi xoá.
+static void kill_webkit_helpers(void) {
+    kill_procs_matching("com.apple.WebKit.");
+    for (int i = 0; i < 20; i++) {              // ~2s: 20 × 100ms — đợi hết tiến trình WebKit
         usleep(100 * 1000);
-        killall_signal(e, "-9");                // còn sống → nện tiếp
+        if (kill_procs_matching("com.apple.WebKit.") == 0) return;   // không còn con nào → xong
     }
 }
 
@@ -356,6 +412,13 @@ int appctl_clear_data(const char *bundle_id, int *removed, char *err, size_t err
         // (Safari: BrowserState.db tab/lịch sử) ĐÈ lên phần ta vừa xoá. Xem kill_hard_wait.
         kill_hard_wait(bid);
 
+        // Safari: cookie/session/localStorage do các tiến trình WebKit CHẠY RIÊNG (Networking/
+        // WebContent/GPU) nắm giữ — sống sót qua cái chết của MobileSafari. Không giết chúng thì
+        // Networking flush cookie cũ ghi đè lại sau khi xoá → xoá KHÔNG SẠCH. Giết cứng cả 3 TRƯỚC
+        // khi removeItem để đảm bảo không còn tiến trình nào ghi lại dữ liệu web.
+        BOOL isSafari = [bid isEqualToString:@"com.apple.mobilesafari"];
+        if (isSafari) kill_webkit_helpers();
+
         NSFileManager *fm = [NSFileManager defaultManager];
         NSError *e = nil;
         NSArray *items = [fm contentsOfDirectoryAtPath:dir error:&e];
@@ -369,7 +432,6 @@ int appctl_clear_data(const char *bundle_id, int *removed, char *err, size_t err
         }
         // Safari: tab/lịch sử/cookie nằm NGOÀI container (ở HOME mobile) → xoá thêm mới sạch tab cũ.
         char sdiag[512] = {0};
-        BOOL isSafari = [bid isEqualToString:@"com.apple.mobilesafari"];
         if (isSafari)
             n += clear_safari_system_data(sdiag, sizeof(sdiag));
         // #1 keychain + #2 app-group: token/login của app native nằm NGOÀI data-container → xoá thêm

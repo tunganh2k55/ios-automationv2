@@ -1,6 +1,6 @@
 Package: com.iosauto
 Name: iOSAuto
-Version: 1.0.33
+Version: 1.0.34
 Architecture: iphoneos-arm64
 Description: iOSAuto — tự động hoá iPhone. iOS 15-16 rootless.
 Maintainer: iOSAuto Team

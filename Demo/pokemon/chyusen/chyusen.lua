@@ -52,6 +52,12 @@ local MAX_EMPTY_RETRY = 100               -- khi hết acc, thử lại tối đ
 local EMPTY_RETRY_GAP = 10                 -- chờ 5s giữa mỗi lần retry khi hết acc
 local MAX_ERROR_RETRY = 10                -- retry lỗi khác (network, server) tối đa 5 lần liên tiếp
 
+-- Poll code xác thực (mail): chờ TỐI ĐA ~3 phút. Chia CODE_POLL_TRIES lần, mỗi lần nghỉ CODE_POLL_GAP
+-- giây (36 × 5s ≈ 180s). Có CHỐT thời gian thực (os.time) → KHÔNG vượt quá 3 phút kể cả khi mạng chậm.
+local CODE_POLL_TRIES   = 36               -- số lần poll tối đa (đủ phủ 3 phút với gap 5s)
+local CODE_POLL_GAP     = 5                -- nghỉ giữa 2 lần poll (giây)
+local CODE_POLL_MAX_SEC = 180              -- trần thời gian chờ tổng (giây) = 3 phút
+
 -- ========== HELPERS ==========
 local function trim(s) return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
 
@@ -274,7 +280,7 @@ local function uploadResult(key, id, result, status)
     return nil, "HTTP_" .. tostring(st)
 end
 
-local function getChyusenCode(key, id, tries, gap)
+local function getChyusenCode(key, id, tries, gap, maxSec)
     -- Case 1: Thiếu id
     if not id or id == "" then
         return nil, "MISSING_ID", "thiếu id"
@@ -282,11 +288,20 @@ local function getChyusenCode(key, id, tries, gap)
 
     tries = math.max(1, tonumber(tries) or 20)
     gap = tonumber(gap) or 5
+    -- Trần thời gian chờ TỔNG (giây). Poll dừng khi ĐỦ maxSec dù chưa hết `tries` — đảm bảo "tối đa
+    -- 3 phút" kể cả khi từng lần httpGet chậm. Mặc định = tries*gap (giữ hành vi cũ nếu không truyền).
+    maxSec = tonumber(maxSec) or (tries * gap)
+    local startT = (os and os.time) and os.time() or nil    -- os.time có thể bị sandbox → bỏ chốt, chỉ theo tries
     local url = BASE .. "/api/v1/chyusen/code?id=" .. tostring(id)
     local lastErr = "unknown"
     local lastCode = "UNKNOWN"
 
     for attempt = 1, tries do
+        -- Chốt thời gian thực: đã chờ đủ maxSec → dừng sớm (không đợi cho hết `tries`).
+        if startT and (os.time() - startT) >= maxSec then
+            notify(string.format("getCode: đã chờ ~%ds (trần %ds) → dừng poll", os.time() - startT, maxSec), 2)
+            break
+        end
         local body, st = httpGet(url, { ["x-api-key"] = key })
 
         -- Case 2: Lỗi mạng
@@ -365,7 +380,8 @@ local function getChyusenCode(key, id, tries, gap)
         ::continue::
     end
 
-    return nil, lastCode, "hết " .. tries .. " lần: " .. lastErr
+    local waited = startT and (os.time() - startT) or (tries * gap)
+    return nil, lastCode, string.format("hết thời gian chờ code (~%ds, trần %ds): %s", waited, maxSec, lastErr)
 end
 
 -- ========== SAFARI HELPERS ==========
@@ -496,6 +512,27 @@ local function clickWait(field, timeout)
     return waitFor(function() return safari.click(field) end, timeout, 0.5)
 end
 
+-- checkboxWait: tick checkbox/radio bằng safari.checkbox — tìm ĐÚNG <input>, tap vào label nếu input
+-- bị ẩn/quá nhỏ (style đè lên), VERIFY .checked + .click() JS bù nếu HID tap trượt. Chuẩn hơn nhiều so
+-- với safari.click (chỉ tap toạ độ → dễ trượt/không toggle với ô ẩn). Daemon cũ chưa có safari.checkbox
+-- → fallback về safari.click để vẫn chạy được.
+local function checkboxWait(field, timeout)
+    if not safari then
+        return false, "safari object không tồn tại"
+    end
+    if not field or field == "" then
+        return false, "selector rỗng"
+    end
+    if type(safari.checkbox) == "function" then
+        return waitFor(function() return safari.checkbox(field) end, timeout, 0.5)
+    end
+    -- Fallback daemon cũ (chưa có safari.checkbox)
+    if type(safari.click) == "function" then
+        return waitFor(function() return safari.click(field) end, timeout, 0.5)
+    end
+    return false, "safari.checkbox/click chưa có"
+end
+
 local function clearSafari()
     -- Case 1: Thử safari.clear() trước (daemon mới)
     if safari and type(safari.clear) == "function" then
@@ -546,9 +583,9 @@ local function applyItem(idx)
     end
     sleep(0.5)
 
-    -- Step 3: Check checkbox đồng ý
+    -- Step 3: Check checkbox đồng ý (safari.checkbox: tìm input thật + tap label + verify .checked)
     local selCheckbox = string.format('ul.comOrderList > li:nth-child(%d) input[type="checkbox"].-check', idx)
-    local ok3, diag3 = clickWait(selCheckbox, 10)
+    local ok3, diag3 = checkboxWait(selCheckbox, 10)
     if not ok3 then
         table.insert(errors, "step3_checkbox: " .. tostring(diag3))
         notify("FAIL item " .. idx .. ": không check được checkbox - " .. tostring(diag3), 2)
@@ -746,7 +783,7 @@ local function processOne(key, accountNum)
     notify("[#" .. accountNum .. "] Trang パスコード → chờ mail...", 3)
 
     -- Step 10: Poll lấy code
-    local passcode, codeStatus, codeDiag = getChyusenCode(key, id, 20, 5)
+    local passcode, codeStatus, codeDiag = getChyusenCode(key, id, CODE_POLL_TRIES, CODE_POLL_GAP, CODE_POLL_MAX_SEC)
     if not passcode then
         if codeStatus == "BAD_CONFIG" then
             failReason = "thiếu email_forward/app_password trong dòng chyusen"

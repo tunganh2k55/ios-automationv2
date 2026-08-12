@@ -433,14 +433,43 @@ local function genderValue(g)
     return "1"                                    -- mặc định 男性
 end
 
+-- clearSafari: xoá TOÀN BỘ dữ liệu Safari (cookie/cache/session/lịch sử) → mỗi lần reg như máy mới,
+-- tránh dính phiên/tài khoản cũ. 2 tầng như chyusen: (1) ưu tiên safari.clear() (daemon mới, xoá qua
+-- WebKit gọn hơn) → (2) fallback clearAppData (xoá nguyên container) cho daemon cũ. Trả (ok, diag).
+local function clearSafari()
+    -- Case 1: Thử safari.clear() trước (daemon mới)
+    if safari and type(safari.clear) == "function" then
+        local okCall, ok, count, diag = pcall(safari.clear)
+        if okCall and ok then
+            notify(string.format("Safari clear OK - xóa %s mục", tostring(count)), 2)
+            return true, "OK"
+        end
+        notify("safari.clear lỗi: " .. tostring(count or diag) .. " — thử clearAppData", 2)
+    end
+
+    -- Case 2: Fallback clearAppData
+    if type(clearAppData) == "function" then
+        local okCall, ok, count = pcall(clearAppData, "com.apple.mobilesafari")
+        if okCall and ok then
+            notify("clearAppData Safari OK - " .. tostring(count) .. " mục", 2)
+            return true, "OK"
+        end
+        return false, "clearAppData lỗi: " .. tostring(ok or count)
+    end
+
+    -- Case 3: Không có hàm clear
+    return false, "không có hàm clear Safari (daemon quá cũ)"
+end
+
 function main()
   -- Nếu bật use4g trong config: TẮT/BẬT 4G (10s) để xin IP di động mới TRƯỚC khi tạo tài khoản.
   cycle4g()
 
-  -- Xoá TOÀN BỘ dữ liệu Safari trước khi reg (cookie/cache/session/lịch sử) → mỗi lần reg như máy
-  -- mới, tránh dính phiên/tài khoản cũ. Cần iOSAuto ≥ 0.7.65 (có clearAppData).
-  local okc, nc = clearAppData("com.apple.mobilesafari")
-  notify("Xoá dữ liệu Safari: " .. (okc and (tostring(nc) .. " mục") or ("lỗi " .. tostring(nc))), 3)
+  -- Xoá TOÀN BỘ dữ liệu Safari trước khi reg (2 tầng: safari.clear → clearAppData). Cần iOSAuto ≥ 0.7.65.
+  local okClear, clearDiag = clearSafari()
+  if not okClear then
+    notify("Xoá dữ liệu Safari lỗi: " .. tostring(clearDiag) .. " — vẫn tiếp tục", 3)
+  end
   randSleep(1, 2)   -- nghỉ ngẫu nhiên 1-3s trước khi mở web (giả lập thao tác người)
 
   notify("Đang lấy thông tin đăng ký...", 3)
@@ -578,6 +607,7 @@ function main()
   if not clickField("button.submitButton", "nút 登録する (đăng ký)") then
     return regFailed("Bấm nút đăng ký (登録する) thất bại", content)
   end
+  sleep(5)
 
   -- Bấm 登録する → form submit → điều hướng sang trang kết quả. Nghỉ ngắn cho Safari kịp bắt đầu
   -- điều hướng rồi CHỜ trang load XONG (≤60s) trước khi kiểm hoàn tất.
