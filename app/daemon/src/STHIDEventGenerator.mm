@@ -3,6 +3,8 @@
  * Adapted from TrollVNC (https://github.com/OwnGoalStudio/TrollVNC)
  * Copyright (c) 2025 82Flex <82flex@gmail.com> and contributors
  * Licensed under GPL-2.0
+ *
+ * Uses dlopen/dlsym to load private IOKit HID symbols at runtime.
  */
 
 #if !__has_feature(objc_arc)
@@ -11,6 +13,7 @@
 
 #import <Foundation/Foundation.h>
 #import <mach/mach_time.h>
+#import <dlfcn.h>
 
 #import "IOKitSPI.h"
 #import "STHIDEventGenerator.h"
@@ -44,6 +47,61 @@ typedef struct {
     IOHIDFloat pathPressure;
     UInt8 pathProximity;
 } SyntheticEventDigitizerInfo;
+
+#pragma mark - Dynamic IOKit Symbol Loading
+
+typedef IOHIDEventRef (*IOHIDEventCreateDigitizerEventFunc)(CFAllocatorRef, uint64_t, IOHIDDigitizerTransducerType, uint32_t, uint32_t, IOHIDDigitizerEventMask, uint32_t, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, boolean_t, boolean_t, IOOptionBits);
+typedef IOHIDEventRef (*IOHIDEventCreateDigitizerFingerEventFunc)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, IOHIDDigitizerEventMask, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, IOHIDFloat, boolean_t, boolean_t, IOHIDEventOptionBits);
+typedef IOHIDEventRef (*IOHIDEventCreateKeyboardEventFunc)(CFAllocatorRef, uint64_t, uint32_t, uint32_t, boolean_t, IOOptionBits);
+typedef void (*IOHIDEventSetIntegerValueFunc)(IOHIDEventRef, IOHIDEventField, CFIndex);
+typedef void (*IOHIDEventSetFloatValueFunc)(IOHIDEventRef, IOHIDEventField, IOHIDFloat);
+typedef void (*IOHIDEventSetSenderIDFunc)(IOHIDEventRef, uint64_t);
+typedef void (*IOHIDEventAppendEventFunc)(IOHIDEventRef, IOHIDEventRef, IOOptionBits);
+typedef IOHIDEventSystemClientRef (*IOHIDEventSystemClientCreateFunc)(CFAllocatorRef);
+typedef void (*IOHIDEventSystemClientDispatchEventFunc)(IOHIDEventSystemClientRef, IOHIDEventRef);
+
+static IOHIDEventCreateDigitizerEventFunc _IOHIDEventCreateDigitizerEvent = NULL;
+static IOHIDEventCreateDigitizerFingerEventFunc _IOHIDEventCreateDigitizerFingerEvent = NULL;
+static IOHIDEventCreateKeyboardEventFunc _IOHIDEventCreateKeyboardEvent = NULL;
+static IOHIDEventSetIntegerValueFunc _IOHIDEventSetIntegerValue = NULL;
+static IOHIDEventSetFloatValueFunc _IOHIDEventSetFloatValue = NULL;
+static IOHIDEventSetSenderIDFunc _IOHIDEventSetSenderID = NULL;
+static IOHIDEventAppendEventFunc _IOHIDEventAppendEvent = NULL;
+static IOHIDEventSystemClientCreateFunc _IOHIDEventSystemClientCreate = NULL;
+static IOHIDEventSystemClientDispatchEventFunc _IOHIDEventSystemClientDispatchEvent = NULL;
+
+static BOOL gIOKitLoaded = NO;
+
+static void loadIOKitSymbols(void) {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        void *iokit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_NOW);
+        if (!iokit) {
+            log_msg("STHIDEventGenerator: Failed to load IOKit framework");
+            return;
+        }
+
+        _IOHIDEventCreateDigitizerEvent = (IOHIDEventCreateDigitizerEventFunc)dlsym(iokit, "IOHIDEventCreateDigitizerEvent");
+        _IOHIDEventCreateDigitizerFingerEvent = (IOHIDEventCreateDigitizerFingerEventFunc)dlsym(iokit, "IOHIDEventCreateDigitizerFingerEvent");
+        _IOHIDEventCreateKeyboardEvent = (IOHIDEventCreateKeyboardEventFunc)dlsym(iokit, "IOHIDEventCreateKeyboardEvent");
+        _IOHIDEventSetIntegerValue = (IOHIDEventSetIntegerValueFunc)dlsym(iokit, "IOHIDEventSetIntegerValue");
+        _IOHIDEventSetFloatValue = (IOHIDEventSetFloatValueFunc)dlsym(iokit, "IOHIDEventSetFloatValue");
+        _IOHIDEventSetSenderID = (IOHIDEventSetSenderIDFunc)dlsym(iokit, "IOHIDEventSetSenderID");
+        _IOHIDEventAppendEvent = (IOHIDEventAppendEventFunc)dlsym(iokit, "IOHIDEventAppendEvent");
+        _IOHIDEventSystemClientCreate = (IOHIDEventSystemClientCreateFunc)dlsym(iokit, "IOHIDEventSystemClientCreate");
+        _IOHIDEventSystemClientDispatchEvent = (IOHIDEventSystemClientDispatchEventFunc)dlsym(iokit, "IOHIDEventSystemClientDispatchEvent");
+
+        if (_IOHIDEventCreateDigitizerEvent && _IOHIDEventCreateDigitizerFingerEvent &&
+            _IOHIDEventSetIntegerValue && _IOHIDEventSetFloatValue &&
+            _IOHIDEventSetSenderID && _IOHIDEventAppendEvent &&
+            _IOHIDEventSystemClientCreate && _IOHIDEventSystemClientDispatchEvent) {
+            gIOKitLoaded = YES;
+            log_msg("STHIDEventGenerator: IOKit symbols loaded successfully");
+        } else {
+            log_msg("STHIDEventGenerator: Failed to load some IOKit symbols");
+        }
+    });
+}
 
 NS_INLINE CFTimeInterval secondsSinceAbsoluteTime(CFAbsoluteTime startTime) {
     return (CFAbsoluteTimeGetCurrent() - startTime);
@@ -87,6 +145,8 @@ NS_INLINE void delayBetweenMove(int eventIndex, double elapsed) {
     self = [super init];
     if (!self) return nil;
 
+    loadIOKitSymbols();
+
     _physicalScreenSize = CGSizeMake(1170, 2532);
 
     dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(
@@ -104,9 +164,15 @@ NS_INLINE void delayBetweenMove(int eventIndex, double elapsed) {
     log_msg("STHIDEventGenerator: screen size set to %.0fx%.0f", size.width, size.height);
 }
 
+- (BOOL)isAvailable {
+    return gIOKitLoaded;
+}
+
 #pragma mark - HID Event Creation
 
 - (IOHIDEventRef)_createIOHIDEventType:(HandEventType)eventType {
+    if (!gIOKitLoaded) return NULL;
+
     BOOL isTouching = (eventType == HandEventTouched || eventType == HandEventMoved || eventType == HandEventChordChanged);
 
     IOHIDDigitizerEventMask eventMask = kIOHIDDigitizerEventTouch;
@@ -122,12 +188,14 @@ NS_INLINE void delayBetweenMove(int eventIndex, double elapsed) {
     }
 
     uint64_t machTime = mach_absolute_time();
-    IOHIDEventRef eventRef = IOHIDEventCreateDigitizerEvent(
+    IOHIDEventRef eventRef = _IOHIDEventCreateDigitizerEvent(
         kCFAllocatorDefault, machTime, kIOHIDDigitizerTransducerTypeHand, 0, 0,
         eventMask, 0, 0, 0, 0, 0, 0, 0, isTouching, kIOHIDEventOptionNone);
 
-    IOHIDEventSetIntegerValue(eventRef, kIOHIDEventFieldIsBuiltIn, 1);
-    IOHIDEventSetIntegerValue(eventRef, kIOHIDEventFieldDigitizerIsDisplayIntegrated, 1);
+    if (!eventRef) return NULL;
+
+    _IOHIDEventSetIntegerValue(eventRef, kIOHIDEventFieldIsBuiltIn, 1);
+    _IOHIDEventSetIntegerValue(eventRef, kIOHIDEventFieldDigitizerIsDisplayIntegrated, 1);
 
     for (NSUInteger i = 0; i < _activePointCount; ++i) {
         SyntheticEventDigitizerInfo *pointInfo = &_activePoints[i];
@@ -145,7 +213,7 @@ NS_INLINE void delayBetweenMove(int eventIndex, double elapsed) {
         CGPoint point = pointInfo->point;
         point = CGPointMake(point.x / _physicalScreenSize.width, point.y / _physicalScreenSize.height);
 
-        IOHIDEventRef subEvent = IOHIDEventCreateDigitizerFingerEvent(
+        IOHIDEventRef subEvent = _IOHIDEventCreateDigitizerFingerEvent(
             kCFAllocatorDefault,
             machTime,
             pointInfo->identifier,
@@ -158,29 +226,33 @@ NS_INLINE void delayBetweenMove(int eventIndex, double elapsed) {
             pointInfo->pathProximity & kGSEventPathInfoInTouch,
             kIOHIDEventOptionNone);
 
-        IOHIDEventSetFloatValue(subEvent, kIOHIDEventFieldDigitizerMinorRadius, pointInfo->pathMajorRadius);
-        IOHIDEventSetFloatValue(subEvent, kIOHIDEventFieldDigitizerMajorRadius, pointInfo->pathMajorRadius);
-
-        IOHIDEventAppendEvent(eventRef, subEvent, 0);
-        CFRelease(subEvent);
+        if (subEvent) {
+            _IOHIDEventSetFloatValue(subEvent, kIOHIDEventFieldDigitizerMinorRadius, pointInfo->pathMajorRadius);
+            _IOHIDEventSetFloatValue(subEvent, kIOHIDEventFieldDigitizerMajorRadius, pointInfo->pathMajorRadius);
+            _IOHIDEventAppendEvent(eventRef, subEvent, 0);
+            CFRelease(subEvent);
+        }
     }
 
     return eventRef;
 }
 
 static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
+    if (!gIOKitLoaded || !eventRef) return;
+
     static IOHIDEventSystemClientRef _ioSystemClient = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         @autoreleasepool {
-            _ioSystemClient = IOHIDEventSystemClientCreate(kCFAllocatorDefault);
+            _ioSystemClient = _IOHIDEventSystemClientCreate(kCFAllocatorDefault);
         }
     });
-    if (eventRef) {
+
+    if (_ioSystemClient) {
         IOHIDEventRef strongEvent = (IOHIDEventRef)CFRetain(eventRef);
         dispatch_async(queue, ^{
-            IOHIDEventSetSenderID(strongEvent, 0x8000000817319371);
-            IOHIDEventSystemClientDispatchEvent(_ioSystemClient, strongEvent);
+            _IOHIDEventSetSenderID(strongEvent, 0x8000000817319371);
+            _IOHIDEventSystemClientDispatchEvent(_ioSystemClient, strongEvent);
             CFRelease(strongEvent);
         });
     }
@@ -189,6 +261,7 @@ static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
 #pragma mark - Touch Methods
 
 - (void)_updateTouchPoints:(CGPoint *)points count:(NSUInteger)count {
+    if (!gIOKitLoaded) return;
     NSParameterAssert(count > 0);
 
     HandEventType handEventType;
@@ -208,11 +281,14 @@ static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
     }
 
     IOHIDEventRef eventRef = [self _createIOHIDEventType:handEventType];
-    _sendHIDEvent(eventRef, _hidEventQueue);
-    CFRelease(eventRef);
+    if (eventRef) {
+        _sendHIDEvent(eventRef, _hidEventQueue);
+        CFRelease(eventRef);
+    }
 }
 
 - (void)touchDownAtPoints:(CGPoint *)locations touchCount:(NSUInteger)touchCount {
+    if (!gIOKitLoaded) return;
     NSParameterAssert(touchCount > 0);
     touchCount = MIN(touchCount, HIDMaxTouchCount);
 
@@ -223,8 +299,10 @@ static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
     }
 
     IOHIDEventRef eventRef = [self _createIOHIDEventType:HandEventTouched];
-    _sendHIDEvent(eventRef, _hidEventQueue);
-    CFRelease(eventRef);
+    if (eventRef) {
+        _sendHIDEvent(eventRef, _hidEventQueue);
+        CFRelease(eventRef);
+    }
 }
 
 - (void)touchDown:(CGPoint)location {
@@ -232,6 +310,7 @@ static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
 }
 
 - (void)liftUpAtPoints:(CGPoint *)locations touchCount:(NSUInteger)touchCount {
+    if (!gIOKitLoaded) return;
     NSParameterAssert(touchCount > 0);
     touchCount = MIN(touchCount, HIDMaxTouchCount);
     touchCount = MIN(touchCount, _activePointCount);
@@ -243,8 +322,10 @@ static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
     }
 
     IOHIDEventRef eventRef = [self _createIOHIDEventType:HandEventLifted];
-    _sendHIDEvent(eventRef, _hidEventQueue);
-    CFRelease(eventRef);
+    if (eventRef) {
+        _sendHIDEvent(eventRef, _hidEventQueue);
+        CFRelease(eventRef);
+    }
 
     _activePointCount = newPointCount;
 }
@@ -254,6 +335,7 @@ static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
 }
 
 - (void)_moveLinearToPoints:(CGPoint *)newLocations touchCount:(NSUInteger)touchCount duration:(NSTimeInterval)seconds {
+    if (!gIOKitLoaded) return;
     NSParameterAssert(seconds > 0.0);
     touchCount = MIN(touchCount, HIDMaxTouchCount);
 
@@ -309,6 +391,7 @@ static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
 }
 
 - (void)dragLinearWithStartPoint:(CGPoint)startLocation endPoint:(CGPoint)endLocation duration:(NSTimeInterval)seconds {
+    if (!gIOKitLoaded) return;
     NSParameterAssert(seconds > 0.0);
     [self touchDown:startLocation];
     [self _moveLinearToPoints:&endLocation touchCount:1 duration:seconds];
@@ -318,10 +401,14 @@ static void _sendHIDEvent(IOHIDEventRef eventRef, dispatch_queue_t queue) {
 #pragma mark - Keyboard Events
 
 - (void)_sendIOHIDKeyboardEvent:(uint32_t)page usage:(uint32_t)usage isKeyDown:(boolean_t)isKeyDown {
-    IOHIDEventRef eventRef = IOHIDEventCreateKeyboardEvent(
+    if (!gIOKitLoaded || !_IOHIDEventCreateKeyboardEvent) return;
+
+    IOHIDEventRef eventRef = _IOHIDEventCreateKeyboardEvent(
         kCFAllocatorDefault, mach_absolute_time(), page, usage, isKeyDown, kIOHIDEventOptionNone);
-    _sendHIDEvent(eventRef, _hidEventQueue);
-    CFRelease(eventRef);
+    if (eventRef) {
+        _sendHIDEvent(eventRef, _hidEventQueue);
+        CFRelease(eventRef);
+    }
 }
 
 - (void)menuPress {
