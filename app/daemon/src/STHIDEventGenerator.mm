@@ -502,8 +502,8 @@ static uint32_t hidUsageCodeForCharacter(NSString *key) {
 
 @end
 
-// Lấy kích thước màn hình point từ touch.c
-extern void touch_screen_size(int *w, int *h);
+// Lấy kích thước màn hình point từ touch.c (C function, cần extern "C")
+extern "C" void touch_screen_size(int *w, int *h);
 
 // C wrapper để touch.c có thể gọi tap HID
 // x,y là tọa độ POINT (từ tweak/UIKit). STHIDEventGenerator dùng tọa độ PIXEL.
