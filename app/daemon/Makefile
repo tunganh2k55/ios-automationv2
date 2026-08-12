@@ -12,8 +12,9 @@ include $(THEOS)/makefiles/common.mk
 
 TOOL_NAME = iosautod
 
-iosautod_FILES = $(wildcard src/*.c) $(wildcard src/*.m) $(wildcard lua/*.c)
+iosautod_FILES = $(wildcard src/*.c) $(wildcard src/*.m) $(wildcard src/*.mm) $(wildcard lua/*.c)
 iosautod_CFLAGS = -fobjc-arc -Isrc -Ilua -Iinclude -DLUA_USE_IOS -Wno-deprecated-declarations -Wno-arc-performSelector-leaks -Wno-error
+iosautod_CCFLAGS = -fobjc-arc -Isrc -Ilua -Iinclude -std=c++14 -Wno-deprecated-declarations -Wno-error
 # BẪY 2: chỉ link framework có gọi symbol thật (Foundation/CoreFoundation).
 # SpringBoardServices / LaunchServices nạp qua dlopen → KHÔNG link.
 # IOSurface/CoreGraphics/ImageIO: chụp framebuffer (fbcap.m). IOMobileFramebuffer +

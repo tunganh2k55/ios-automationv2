@@ -17,6 +17,7 @@
 #ifdef HAVE_LIBVNCSERVER
 #include <rfb/rfb.h>
 #include <rfb/keysym.h>
+#import "STHIDEventGenerator.h"
 #endif
 
 // ===== GLOBAL STATE =====
@@ -27,11 +28,8 @@ static int g_client_count = 0;
 static pthread_t g_capture_thread = 0;
 static int g_capture_stop = 0;
 
-// VNC pointer state: lưu vị trí + thời điểm DOWN để quyết định tap vs swipe khi UP.
-// Đây là fallback test — sau này port TrollVNC input implementation thực sự.
-static int g_vnc_down_x = 0, g_vnc_down_y = 0;
-static int g_vnc_last_x = 0, g_vnc_last_y = 0;
-static uint64_t g_vnc_down_time = 0;   // mach_absolute_time hoặc clock_gettime
+// VNC screen size (pixel) for coordinate mapping
+static int g_screen_px_w = 0, g_screen_px_h = 0;
 
 // Framebuffer: 1 buffer duy nhất. libvncserver ĐỌC nó (encode gửi client), đồng thời nó là
 // THAM CHIẾU KHUNG TRƯỚC cho diff — band nào không đổi thì đã đúng sẵn, khỏi copy/gửi lại.
@@ -69,82 +67,96 @@ static void vnc_client_gone(rfbClientPtr cl) {
     log_msg("vnc: client ngắt, còn %d", g_client_count);
 }
 
-// Lấy timestamp ms hiện tại (monotonic).
-static uint64_t vnc_now_ms(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
-
-// Pointer event (mouse/touch từ VNC client).
-// FALLBACK TEST: route sang IATap/IASwipe để chứng minh VNC pipeline hoạt động.
-// Sau khi xác nhận tap/swipe chạy, thay lớp này bằng TrollVNC input implementation.
-//
-// Logic:
-//   DOWN → lưu x0,y0,time
-//   MOVE → lưu x,y cuối
-//   UP   → distance < 8px => IATap(x,y)
-//          else           => IASwipe(x0,y0,x,y,duration)
+// VNC Pointer Event — TrollVNC-style direct HID injection
+// Uses STHIDEventGenerator for touch injection (same as TrollVNC)
+// Button mapping:
+//   Left (bit 0)   → Touch events (touchDown/Move/liftUp)
+//   Middle (bit 1) → Power button
+//   Right (bit 2)  → Home/Menu button
 static void vnc_ptr_event(int buttonMask, int x, int y, rfbClientPtr cl) {
-    int pw = 0, ph = 0;
-    touch_screen_size(&pw, &ph);
-    if (pw <= 0 || ph <= 0) { pw = 390; ph = 844; }
+    STHIDEventGenerator *gen = [STHIDEventGenerator sharedGenerator];
 
-    // noVNC gửi toạ độ theo PIXEL của framebuffer (g_fb_w×g_fb_h). Map pixel→point theo TỈ LỆ THỰC
-    // (không giả định @2x — máy khác scale khác), rồi kẹp trong màn.
-    int fbw = g_fb_w > 0 ? g_fb_w : pw;
-    int fbh = g_fb_h > 0 ? g_fb_h : ph;
-    int tx = (int)((long long)x * pw / fbw);
-    int ty = (int)((long long)y * ph / fbh);
-    if (tx < 0) tx = 0; else if (tx > pw - 1) tx = pw - 1;
-    if (ty < 0) ty = 0; else if (ty > ph - 1) ty = ph - 1;
+    // Map VNC pixel coords to device pixel coords
+    int fbw = g_fb_w > 0 ? g_fb_w : 780;
+    int fbh = g_fb_h > 0 ? g_fb_h : 1688;
+    int srcW = g_screen_px_w > 0 ? g_screen_px_w : fbw;
+    int srcH = g_screen_px_h > 0 ? g_screen_px_h : fbh;
+
+    double sx = (fbw > 0) ? ((double)srcW / (double)fbw) : 1.0;
+    double sy = (fbh > 0) ? ((double)srcH / (double)fbh) : 1.0;
+    double dx = sx * (double)x;
+    double dy = sy * (double)y;
+    if (dx < 0) dx = 0;
+    if (dy < 0) dy = 0;
+    if (dx > (double)(srcW - 1)) dx = (double)(srcW - 1);
+    if (dy > (double)(srcH - 1)) dy = (double)(srcH - 1);
+
+    CGPoint pt = CGPointMake((CGFloat)dx, (CGFloat)dy);
 
     int leftNow = (buttonMask & 1) != 0;
     int leftPrev = (g_ptr_mask & 1) != 0;
-    g_ptr_mask = buttonMask;
 
-    char err[128] = {0};
+    // Left button → Touch
     if (leftNow && !leftPrev) {
-        // DOWN: lưu vị trí + thời điểm bắt đầu
-        g_vnc_down_x = tx;
-        g_vnc_down_y = ty;
-        g_vnc_last_x = tx;
-        g_vnc_last_y = ty;
-        g_vnc_down_time = vnc_now_ms();
-        log_msg("vnc: DOWN pt(%d,%d) px(%d,%d) fb=%dx%d", tx, ty, x, y, fbw, fbh);
+        [gen touchDownAtPoints:&pt touchCount:1];
+        log_msg("VNC DOWN x=%.0f y=%.0f", pt.x, pt.y);
     } else if (!leftNow && leftPrev) {
-        // UP: quyết định tap hay swipe dựa trên distance
-        int dx = g_vnc_last_x - g_vnc_down_x;
-        int dy = g_vnc_last_y - g_vnc_down_y;
-        int dist = (int)sqrt((double)(dx*dx + dy*dy));
-        uint64_t dur_ms = vnc_now_ms() - g_vnc_down_time;
-        double dur_sec = dur_ms / 1000.0;
-        if (dur_sec < 0.1) dur_sec = 0.1;   // tối thiểu 100ms cho swipe
-        if (dur_sec > 2.0) dur_sec = 2.0;   // tối đa 2s
-
-        if (dist < 8) {
-            // Tap: di chuyển ít, coi như click
-            int rc = touch_tap(g_vnc_last_x, g_vnc_last_y, err, sizeof(err));
-            log_msg("vnc: UP → TAP pt(%d,%d) dist=%d rc=%d %s", g_vnc_last_x, g_vnc_last_y, dist, rc, err);
-        } else {
-            // Swipe: di chuyển đủ xa
-            int rc = touch_swipe(g_vnc_down_x, g_vnc_down_y, g_vnc_last_x, g_vnc_last_y, dur_sec, err, sizeof(err));
-            log_msg("vnc: UP → SWIPE (%d,%d)→(%d,%d) dist=%d dur=%.2fs rc=%d %s",
-                    g_vnc_down_x, g_vnc_down_y, g_vnc_last_x, g_vnc_last_y, dist, dur_sec, rc, err);
-        }
+        [gen liftUpAtPoints:&pt touchCount:1];
+        log_msg("VNC UP x=%.0f y=%.0f", pt.x, pt.y);
     } else if (leftNow) {
-        // MOVE: cập nhật vị trí cuối (không log để tránh spam)
-        g_vnc_last_x = tx;
-        g_vnc_last_y = ty;
+        [gen _updateTouchPoints:&pt count:1];
     }
-    // Middle/Right button (power/home) → TODO khi có TrollVNC HID layer.
+
+    // Middle button (bit 1) → Power
+    int midNow = (buttonMask & 2) != 0;
+    int midPrev = (g_ptr_mask & 2) != 0;
+    if (midNow && !midPrev) {
+        [gen powerDown];
+        log_msg("VNC POWER DOWN");
+    } else if (!midNow && midPrev) {
+        [gen powerUp];
+        log_msg("VNC POWER UP");
+    }
+
+    // Right button (bit 2) → Home/Menu
+    int rightNow = (buttonMask & 4) != 0;
+    int rightPrev = (g_ptr_mask & 4) != 0;
+    if (rightNow && !rightPrev) {
+        [gen menuDown];
+        log_msg("VNC HOME DOWN");
+    } else if (!rightNow && rightPrev) {
+        [gen menuUp];
+        log_msg("VNC HOME UP");
+    }
+
+    g_ptr_mask = buttonMask;
 }
 
-// Keyboard event (từ VNC client)
+// Keyboard event — map VNC keySym to HID keyboard
 static void vnc_kbd_event(rfbBool down, rfbKeySym keySym, rfbClientPtr cl) {
-    // TODO: map keySym → touch layer hoặc HID keyboard
-    // Hiện tại chưa có keyboard injection trong touch.h
-    log_msg("vnc: key %s keySym=0x%x", down ? "down" : "up", (unsigned)keySym);
+    STHIDEventGenerator *gen = [STHIDEventGenerator sharedGenerator];
+
+    // Map common keySym to character for HID injection
+    NSString *ch = nil;
+    if (keySym >= 0x20 && keySym <= 0x7E) {
+        ch = [NSString stringWithFormat:@"%c", (char)keySym];
+    } else if (keySym == 0xFF0D) { // Return
+        ch = @"\n";
+    } else if (keySym == 0xFF08) { // Backspace
+        ch = @"\b";
+    } else if (keySym == 0xFF09) { // Tab
+        ch = @"\t";
+    } else if (keySym == 0xFF1B) { // Escape
+        ch = @"ESCAPE";
+    }
+
+    if (ch) {
+        if (down) {
+            [gen keyDown:ch];
+        } else {
+            [gen keyUp:ch];
+        }
+    }
 }
 
 #endif // HAVE_LIBVNCSERVER
@@ -215,6 +227,11 @@ int vnc_init(int port, const char *password) {
     g_fb_h = ph * scale;
     g_fb_bpr = (size_t)g_fb_w * 4;  // BGRA
     g_fb_size = g_fb_bpr * (size_t)g_fb_h;
+    g_screen_px_w = g_fb_w;
+    g_screen_px_h = g_fb_h;
+
+    // Initialize STHIDEventGenerator with screen size (pixel)
+    [[STHIDEventGenerator sharedGenerator] setPhysicalScreenSize:CGSizeMake(g_fb_w, g_fb_h)];
 
     // Alloc framebuffer (khởi tạo 0 → khung đầu tiên full-dirty, gửi trọn màn 1 lần).
     g_front_buf = calloc(1, g_fb_size);

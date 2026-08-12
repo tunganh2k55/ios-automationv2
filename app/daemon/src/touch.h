@@ -21,11 +21,6 @@ int touch_swipe(int x1, int y1, int x2, int y2, double duration, char *err, size
 // Điều khiển realtime: 1 UITouch liên tục. phase 'd'=down, 'm'=move, 'u'=up. Prefer app foreground.
 int touch_pointer(char phase, int x, int y, char *err, size_t err_len);
 
-// VNC raw HID injection: gửi VNCPTR (HID trực tiếp, KHÔNG quyết định tap/swipe).
-// phase 'd'=down, 'm'=move, 'u'=up. Giữ nguyên pointer lifecycle cho iOS tự nhận diện gesture.
-// Dùng cho noVNC điều khiển trực tiếp qua TrollVNC HID injection.
-int touch_vnc_pointer(char phase, int x, int y, char *err, size_t err_len);
-
 // Gửi verb thô tới tweak (vd "DUMP", "PING") — để debug.
 int touch_raw(const char *line, char *err, size_t err_len);
 

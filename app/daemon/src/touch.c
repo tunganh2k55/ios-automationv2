@@ -355,15 +355,6 @@ int touch_pointer(char phase, int x, int y, char *err, size_t err_len) {
     return send_verb_core(verb, err, err_len, 0, 0);
 }
 
-// VNC raw pointer — gửi VNCPTR (HID injection trực tiếp, không quyết định tap/swipe).
-// Prefer app foreground (prefer_sb=0) để inject HID vào app đang hiển thị.
-// VNC pointer events giữ nguyên lifecycle: down→move...→up, để iOS tự nhận diện gesture.
-int touch_vnc_pointer(char phase, int x, int y, char *err, size_t err_len) {
-    char verb[48];
-    snprintf(verb, sizeof(verb), "VNCPTR %c %d %d\n", phase, x, y);
-    return send_verb_core(verb, err, err_len, 0, 0);   // prefer_sb=0: app foreground
-}
-
 int touch_appearance(int mode, char *err, size_t err_len) {
     if (mode < 0 || mode > 2) mode = 0;
     char verb[32];

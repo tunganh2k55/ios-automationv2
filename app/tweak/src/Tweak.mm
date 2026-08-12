@@ -2654,8 +2654,7 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
     // OCRIMG KHÔNG gate: ảnh do SpringBoard chụp được truyền vào (tự chứa) → app foreground/nền
     // nào chạy Vision cũng cho kết quả như nhau; daemon ưu tiên app mới nhất (foreground). Gate
     // sẽ khiến app foreground SKIP nếu applicationState chưa Active kịp → OCRIMG rơi xuống SpringBoard.
-    // VNCPTR: VNC raw HID injection — gate foreground giống PTR/TAP.
-    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"VNCPTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBSTATE"]]; });
+    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBSTATE"]]; });
     BOOL isSB = [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
     if (!isSB && [interact containsObject:verb] && ![self isForeground])
         return @"SKIP not-foreground";
@@ -2677,10 +2676,6 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
             return IATapSendEvent(CGPointMake([p[1] floatValue], [p[2] floatValue]));
         if ([verb isEqualToString:@"PTR"] && p.count >= 4)
             return IAPointer([p[1] characterAtIndex:0], CGPointMake([p[2] floatValue], [p[3] floatValue]));
-        // VNCPTR: VNC raw HID injection — KHÔNG quyết định tap/swipe, giữ nguyên pointer lifecycle.
-        // Dùng cho noVNC điều khiển trực tiếp qua TrollVNC HID injection.
-        if ([verb isEqualToString:@"VNCPTR"] && p.count >= 4)
-            return IAVNCPointer([p[1] characterAtIndex:0], CGPointMake([p[2] floatValue], [p[3] floatValue]));
         if ([verb isEqualToString:@"TYPE"] && cmd.length > 5)
             return IAType([cmd substringFromIndex:5]);   // toàn bộ sau "TYPE "
         if ([verb isEqualToString:@"KEY"] && p.count >= 2)

@@ -2,151 +2,473 @@
 <html lang="vi">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>iOSAuto VNC</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>iOS Auto — VNC Control</title>
   <style>
-    * { box-sizing: border-box; }
-    body { margin: 0; background: #1c1c1e; color: #fff; font-family: system-ui, sans-serif; }
-    header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #0e0e10; border-bottom: 1px solid #333; }
-    header h1 { margin: 0; font-size: 18px; }
-    .status { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: #ff3b30; }
-    .status.ok { background: #30d158; }
-    .info { font-size: 13px; color: #8e8e93; }
-    main { display: flex; flex-direction: column; align-items: center; padding: 20px; }
-    #vnc-screen { background: #000; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,.5); }
-    #vnc-screen canvas { display: block; }
-    .controls { margin-top: 16px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-    .controls button { padding: 10px 18px; border: 1px solid #444; border-radius: 8px; background: #2c2c2e; color: #fff; cursor: pointer; font-size: 14px; }
-    .controls button:hover { background: #3c3c3e; }
-    .controls button.primary { background: #6366f1; border-color: #6366f1; }
-    .log { margin-top: 20px; width: 100%; max-width: 600px; background: #0e0e10; border-radius: 8px; padding: 12px; font-size: 12px; max-height: 200px; overflow-y: auto; }
-    .log pre { margin: 0; white-space: pre-wrap; color: #8e8e93; }
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0b0d10;
+      color: #e6e8ea;
+      font: 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100vh;
+    }
+
+    .container {
+      display: flex;
+      height: 100vh;
+    }
+
+    /* VNC Panel - Main Screen */
+    .vnc-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #000;
+      position: relative;
+    }
+
+    .vnc-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      background: #14171c;
+      border-bottom: 1px solid #232830;
+    }
+
+    .vnc-header h1 {
+      font-size: 16px;
+      font-weight: 600;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ff3b30;
+      transition: background 0.3s;
+    }
+    .status-dot.connected { background: #30d158; }
+
+    .status-text {
+      font-size: 13px;
+      color: #8b93a1;
+    }
+
+    #vnc-screen {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+      overflow: hidden;
+    }
+
+    #vnc-screen > div {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 8px 40px rgba(0,0,0,.6);
+    }
+
+    /* Control Panel - Sidebar */
+    .control-panel {
+      width: 260px;
+      background: #14171c;
+      border-left: 1px solid #232830;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .panel-section {
+      padding: 16px;
+      border-bottom: 1px solid #232830;
+    }
+
+    .panel-section h3 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #8b93a1;
+      margin-bottom: 12px;
+      letter-spacing: 0.5px;
+    }
+
+    .device-info {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .device-info .label {
+      font-size: 12px;
+      color: #8b93a1;
+    }
+
+    .device-info .value {
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    .btn-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 10px 16px;
+      border: 1px solid #3a4150;
+      border-radius: 8px;
+      background: #2a2f3a;
+      color: #e6e8ea;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn:hover {
+      background: #333a47;
+      border-color: #4a5260;
+    }
+
+    .btn:active {
+      transform: scale(0.98);
+    }
+
+    .btn.primary {
+      background: #6366f1;
+      border-color: #6366f1;
+    }
+
+    .btn.primary:hover {
+      background: #5558e6;
+    }
+
+    .btn.danger {
+      background: #dc2626;
+      border-color: #dc2626;
+    }
+
+    .btn.danger:hover {
+      background: #c12020;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-row .btn {
+      flex: 1;
+    }
+
+    /* Log Panel */
+    .log-panel {
+      flex: 1;
+      padding: 16px;
+      background: #0e1014;
+      overflow-y: auto;
+    }
+
+    .log-panel h3 {
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: #8b93a1;
+      margin-bottom: 12px;
+      letter-spacing: 0.5px;
+    }
+
+    #log {
+      font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+      font-size: 11px;
+      line-height: 1.6;
+      color: #6b7280;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    #log .info { color: #3b82f6; }
+    #log .success { color: #22c55e; }
+    #log .error { color: #ef4444; }
+    #log .event { color: #a855f7; }
+
+    /* Responsive */
+    @media (max-width: 900px) {
+      .container {
+        flex-direction: column;
+      }
+      .control-panel {
+        width: 100%;
+        max-height: 40vh;
+        border-left: none;
+        border-top: 1px solid #232830;
+      }
+      .vnc-panel {
+        min-height: 50vh;
+      }
+    }
+
+    /* Touch feedback */
+    #vnc-screen canvas {
+      touch-action: none;
+      cursor: crosshair;
+    }
   </style>
 </head>
 <body>
-  <header>
-    <h1>iOSAuto VNC</h1>
-    <span class="status" id="status"></span>
-    <span class="info" id="info">Connecting...</span>
-  </header>
 
-  <main>
+<div class="container">
+  <!-- VNC Screen Panel -->
+  <div class="vnc-panel">
+    <div class="vnc-header">
+      <h1>iOS Auto</h1>
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">Connecting...</span>
+    </div>
     <div id="vnc-screen"></div>
+  </div>
 
-    <div class="controls">
-      <button id="btnConnect" class="primary">Connect</button>
-      <button id="btnDisconnect">Disconnect</button>
-      <button id="btnFullscreen">Fullscreen</button>
+  <!-- Control Panel -->
+  <div class="control-panel">
+    <div class="panel-section">
+      <h3>Device</h3>
+      <div class="device-info">
+        <div>
+          <span class="label">Model</span>
+          <div class="value" id="deviceModel">—</div>
+        </div>
+        <div>
+          <span class="label">Resolution</span>
+          <div class="value" id="deviceRes">—</div>
+        </div>
+      </div>
     </div>
 
-    <div class="log">
-      <pre id="log"></pre>
+    <div class="panel-section">
+      <h3>Connection</h3>
+      <div class="btn-group">
+        <div class="btn-row">
+          <button class="btn primary" id="btnConnect">Connect</button>
+          <button class="btn" id="btnDisconnect">Disconnect</button>
+        </div>
+        <button class="btn" id="btnFullscreen">Fullscreen</button>
+      </div>
     </div>
-  </main>
 
-  <!-- noVNC core -->
-  <script type="module">
-    import RFB from './novnc/core/rfb.js';
+    <div class="panel-section">
+      <h3>Device Control</h3>
+      <div class="btn-group">
+        <div class="btn-row">
+          <button class="btn" id="btnHome">Home</button>
+          <button class="btn" id="btnLock">Lock</button>
+        </div>
+        <button class="btn" id="btnScreenshot">Screenshot</button>
+        <button class="btn" id="btnWake">Wake Screen</button>
+      </div>
+    </div>
 
-    const statusEl = document.getElementById('status');
-    const infoEl = document.getElementById('info');
-    const screenEl = document.getElementById('vnc-screen');
-    const logEl = document.getElementById('log');
-    const btnConnect = document.getElementById('btnConnect');
-    const btnDisconnect = document.getElementById('btnDisconnect');
-    const btnFullscreen = document.getElementById('btnFullscreen');
+    <div class="panel-section">
+      <h3>Input Mode</h3>
+      <div class="btn-group">
+        <div class="btn-row">
+          <button class="btn" id="btnViewOnly">View Only</button>
+          <button class="btn primary" id="btnInteractive">Interactive</button>
+        </div>
+      </div>
+      <p style="font-size: 11px; color: #6b7280; margin-top: 8px;">
+        Interactive: touch/click on screen controls the device.<br>
+        Middle-click = Power, Right-click = Home
+      </p>
+    </div>
 
-    let rfb = null;
+    <div class="log-panel">
+      <h3>Log</h3>
+      <div id="log"></div>
+    </div>
+  </div>
+</div>
 
-    function log(msg) {
-      const pre = logEl.querySelector('pre');
-      const time = new Date().toLocaleTimeString();
-      pre.textContent += `[${time}] ${msg}\n`;
-      pre.scrollTop = pre.scrollHeight;
-    }
+<script type="module">
+import RFB from './novnc/core/rfb.js';
 
-    function setStatus(ok, text) {
-      statusEl.classList.toggle('ok', ok);
-      infoEl.textContent = text;
-    }
+const screenEl = document.getElementById('vnc-screen');
+const statusDot = document.getElementById('statusDot');
+const statusText = document.getElementById('statusText');
+const logEl = document.getElementById('log');
+const deviceModel = document.getElementById('deviceModel');
+const deviceRes = document.getElementById('deviceRes');
 
-    function connect() {
-      if (rfb) {
+let rfb = null;
+let viewOnly = false;
+
+function log(msg, type = '') {
+  const time = new Date().toLocaleTimeString('en-US', { hour12: false });
+  const span = document.createElement('div');
+  span.className = type;
+  span.textContent = `[${time}] ${msg}`;
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+  if (logEl.children.length > 100) {
+    logEl.removeChild(logEl.firstChild);
+  }
+}
+
+function setStatus(connected, text) {
+  statusDot.classList.toggle('connected', connected);
+  statusText.textContent = text;
+}
+
+function connect() {
+  if (rfb) {
+    rfb.disconnect();
+  }
+
+  const host = window.location.hostname || 'localhost';
+  const port = window.location.port || '8080';
+  const wsUrl = `ws://${host}:${port}/vnc`;
+
+  log(`Connecting to ${wsUrl}...`, 'info');
+  setStatus(false, 'Connecting...');
+
+  try {
+    rfb = new RFB(screenEl, wsUrl, {
+      shared: true,
+      credentials: { password: '' }
+    });
+
+    rfb.scaleViewport = true;
+    rfb.resizeSession = false;
+    rfb.clipViewport = false;
+    rfb.viewOnly = viewOnly;
+
+    rfb.addEventListener('connect', () => {
+      log('Connected to VNC server', 'success');
+      const w = rfb._fbWidth || '?';
+      const h = rfb._fbHeight || '?';
+      setStatus(true, `Connected ${w}x${h}`);
+      deviceRes.textContent = `${w} x ${h}`;
+    });
+
+    rfb.addEventListener('disconnect', (e) => {
+      const reason = e.detail.clean ? 'clean disconnect' : 'connection lost';
+      log(`Disconnected: ${reason}`, 'error');
+      setStatus(false, 'Disconnected');
+      rfb = null;
+    });
+
+    rfb.addEventListener('credentialsrequired', () => {
+      log('Password required', 'info');
+      const password = prompt('VNC Password:');
+      if (password) {
+        rfb.sendCredentials({ password });
+      } else {
         rfb.disconnect();
-      }
-
-      // WebSocket URL: ws://host:port/vnc
-      const host = window.location.hostname;
-      const port = window.location.port || '8080';
-      const wsUrl = `ws://${host}:${port}/vnc`;
-
-      log(`Connecting to ${wsUrl}...`);
-      setStatus(false, 'Connecting...');
-
-      try {
-        rfb = new RFB(screenEl, wsUrl, {
-          shared: true,
-          credentials: { password: '' }
-        });
-
-        rfb.scaleViewport = true;
-        rfb.resizeSession = false;
-        rfb.clipViewport = true;
-
-        rfb.addEventListener('connect', () => {
-          log('Connected to VNC server');
-          setStatus(true, `Connected - ${rfb.capabilities.width}x${rfb.capabilities.height}`);
-        });
-
-        rfb.addEventListener('disconnect', (e) => {
-          log(`Disconnected: ${e.detail.clean ? 'clean' : 'unclean'}`);
-          setStatus(false, 'Disconnected');
-          rfb = null;
-        });
-
-        rfb.addEventListener('credentialsrequired', () => {
-          log('Server requires password');
-          const password = prompt('VNC Password:');
-          if (password) {
-            rfb.sendCredentials({ password });
-          } else {
-            rfb.disconnect();
-          }
-        });
-
-        rfb.addEventListener('securityfailure', (e) => {
-          log(`Security failure: ${e.detail.status} - ${e.detail.reason}`);
-          setStatus(false, 'Auth failed');
-        });
-
-        rfb.addEventListener('desktopname', (e) => {
-          log(`Desktop name: ${e.detail.name}`);
-        });
-
-      } catch (err) {
-        log(`Error: ${err.message}`);
-        setStatus(false, 'Connection error');
-      }
-    }
-
-    function disconnect() {
-      if (rfb) {
-        log('Disconnecting...');
-        rfb.disconnect();
-        rfb = null;
-      }
-    }
-
-    btnConnect.addEventListener('click', connect);
-    btnDisconnect.addEventListener('click', disconnect);
-    btnFullscreen.addEventListener('click', () => {
-      if (screenEl.requestFullscreen) {
-        screenEl.requestFullscreen();
       }
     });
 
-    // Auto-connect on load
-    setTimeout(connect, 500);
-  </script>
+    rfb.addEventListener('securityfailure', (e) => {
+      log(`Auth failed: ${e.detail.reason || 'unknown'}`, 'error');
+      setStatus(false, 'Auth failed');
+    });
+
+    rfb.addEventListener('desktopname', (e) => {
+      log(`Desktop: ${e.detail.name}`, 'event');
+      deviceModel.textContent = e.detail.name || 'iPhone';
+    });
+
+  } catch (err) {
+    log(`Error: ${err.message}`, 'error');
+    setStatus(false, 'Error');
+  }
+}
+
+function disconnect() {
+  if (rfb) {
+    log('Disconnecting...', 'info');
+    rfb.disconnect();
+    rfb = null;
+  }
+}
+
+function setViewOnly(vo) {
+  viewOnly = vo;
+  if (rfb) {
+    rfb.viewOnly = vo;
+  }
+  document.getElementById('btnViewOnly').classList.toggle('primary', vo);
+  document.getElementById('btnInteractive').classList.toggle('primary', !vo);
+  log(`Input mode: ${vo ? 'View Only' : 'Interactive'}`, 'info');
+}
+
+// Button handlers
+document.getElementById('btnConnect').onclick = connect;
+document.getElementById('btnDisconnect').onclick = disconnect;
+
+document.getElementById('btnFullscreen').onclick = () => {
+  if (screenEl.requestFullscreen) {
+    screenEl.requestFullscreen();
+  }
+};
+
+document.getElementById('btnViewOnly').onclick = () => setViewOnly(true);
+document.getElementById('btnInteractive').onclick = () => setViewOnly(false);
+
+document.getElementById('btnHome').onclick = () => {
+  fetch('/api/home', { method: 'POST' })
+    .then(() => log('Home pressed', 'event'))
+    .catch(e => log(`Home error: ${e}`, 'error'));
+};
+
+document.getElementById('btnLock').onclick = () => {
+  fetch('/api/lock', { method: 'POST' })
+    .then(() => log('Lock pressed', 'event'))
+    .catch(e => log(`Lock error: ${e}`, 'error'));
+};
+
+document.getElementById('btnWake').onclick = () => {
+  fetch('/api/wake', { method: 'POST' })
+    .then(() => log('Wake pressed', 'event'))
+    .catch(e => log(`Wake error: ${e}`, 'error'));
+};
+
+document.getElementById('btnScreenshot').onclick = () => {
+  fetch('/api/screenshot')
+    .then(r => r.blob())
+    .then(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `screenshot-${Date.now()}.jpg`;
+      a.click();
+      URL.revokeObjectURL(url);
+      log('Screenshot saved', 'success');
+    })
+    .catch(e => log(`Screenshot error: ${e}`, 'error'));
+};
+
+// Fetch device info
+fetch('/api/status')
+  .then(r => r.json())
+  .then(d => {
+    if (d.model) deviceModel.textContent = d.model;
+    if (d.screen) deviceRes.textContent = `${d.screen.w} x ${d.screen.h}`;
+  })
+  .catch(() => {});
+
+// Auto-connect
+setTimeout(connect, 300);
+
+log('iOS Auto VNC Client loaded', 'info');
+log('Touch/click on screen to control device', 'info');
+log('Middle-click = Power, Right-click = Home', 'info');
+</script>
 </body>
 </html>
