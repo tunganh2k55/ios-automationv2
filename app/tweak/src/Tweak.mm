@@ -2121,6 +2121,64 @@ static NSString *IAWebScrollTo(NSString *b64field) {
     return result;
 }
 
+// safari.coord (NỘI BỘ): tìm element web khớp `field`, cuộn tới, trả TỌA ĐỘ MÀN HÌNH (không tap).
+// Daemon dùng tọa độ này để tap bằng STHIDEventGenerator (system-level HID) → hiện bàn phím.
+static NSString *IAWebCoord(NSString *b64field) {
+    if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
+        return @"ERR webcoord: cần app foreground";
+    if (!b64field) b64field = @"";
+    __block NSString *result = @"ERR webcoord no-webview";
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIWindow *win = IAActiveWindow();
+            UIView *wv = win ? IAFindWebView(win) : nil;
+            if (!wv && win.windowScene)
+                for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
+            SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webcoord no-webview"; dispatch_semaphore_signal(sem); return; }
+            NSString *js = [NSString stringWithFormat:
+                @"(function(bf){"
+                "function d(b){try{return decodeURIComponent(escape(atob(b)));}catch(e){return atob(b);}}"
+                "var field=d(bf),el=null;"
+                "try{el=document.querySelector(field);}catch(e){}"
+                "if(!el){var f=field.toLowerCase();"
+                "var L=document.querySelectorAll('input,textarea,select,button,a,[contenteditable],[role]');"
+                "for(var i=0;i<L.length;i++){var e=L[i];"
+                "var lab='';if(e.labels){for(var j=0;j<e.labels.length;j++)lab+=' '+(e.labels[j].textContent||'');}"
+                "var hay=[e.placeholder,e.name,e.id,e.type,e.value,e.getAttribute('aria-label'),lab].join(' ').toLowerCase();"
+                "if(hay.indexOf(f)>=0){el=e;break;}}}"
+                "if(!el){var A=document.querySelectorAll('body *');"
+                "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
+                "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];break;}}}"
+                "if(!el)return 'noel';"
+                "el.scrollIntoView({block:'center',inline:'center'});"
+                "var r=el.getBoundingClientRect();var cx=r.left+r.width/2,cy=r.top+r.height/2;"
+                "return 'vp '+Math.round(cx)+','+Math.round(cy);"
+                "})('%@')", b64field];
+            void (^cb)(id, id) = ^(id res, id err) {
+                if (err) { result = [@"ERR webcoord " stringByAppendingString:[err description]]; dispatch_semaphore_signal(sem); return; }
+                if ([res isKindOfClass:[NSString class]] && [res isEqualToString:@"noel"]) { result = @"ERR webcoord: không thấy element"; dispatch_semaphore_signal(sem); return; }
+                NSString *s = [res isKindOfClass:[NSString class]] ? (NSString *)res : @"";
+                if (![s hasPrefix:@"vp "]) { result = [NSString stringWithFormat:@"ERR webcoord parse %@", s]; dispatch_semaphore_signal(sem); return; }
+                NSArray *parts = [[s substringFromIndex:3] componentsSeparatedByString:@","];
+                if (parts.count < 2) { result = @"ERR webcoord coords"; dispatch_semaphore_signal(sem); return; }
+                CGFloat vx = [parts[0] floatValue], vy = [parts[1] floatValue];
+                CGRect wvFrame = [wv convertRect:wv.bounds toView:win];
+                CGFloat sx = wvFrame.origin.x + vx, sy = wvFrame.origin.y + vy;
+                result = [NSString stringWithFormat:@"OK webcoord %.0f,%.0f", sx, sy];
+                dispatch_semaphore_signal(sem);
+            };
+            ((void (*)(id, SEL, id, id))objc_msgSend)(wv, ejs, js, cb);
+        } @catch (NSException *e) {
+            result = [@"ERR webcoord " stringByAppendingString:(e.reason ?: @"?")];
+            dispatch_semaphore_signal(sem);
+        }
+    });
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)));
+    return result;
+}
+
 // safari.click (ẨN): bấm element web khớp `field` trong WKWebView app foreground. Khớp GIỐNG
 // safari.swipe (CSS selector / text / placeholder/name/id/aria-label/label / button / link). Cuộn
 // tới element (scrollIntoView) rồi dùng HID TAP THẬT (như ngón tay) tại tâm element → hiện bàn phím
@@ -2629,14 +2687,14 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
     // OCRIMG KHÔNG gate: ảnh do SpringBoard chụp được truyền vào (tự chứa) → app foreground/nền
     // nào chạy Vision cũng cho kết quả như nhau; daemon ưu tiên app mới nhất (foreground). Gate
     // sẽ khiến app foreground SKIP nếu applicationState chưa Active kịp → OCRIMG rơi xuống SpringBoard.
-    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBSTATE"]]; });
+    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBSTATE"]]; });
     BOOL isSB = [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
     if (!isSB && [interact containsObject:verb] && ![self isForeground])
         return @"SKIP not-foreground";
     // Web verb (WKWebView) chỉ app foreground xử lý được. SpringBoard KHÔNG có WKWebView → SKIP để
     // daemon KHÔNG che câu trả lời thật của Safari (vd "không thấy element") bằng "cần app foreground".
     static NSSet *webVerbs; static dispatch_once_t wo;
-    dispatch_once(&wo, ^{ webVerbs = [NSSet setWithArray:@[@"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBSTATE"]]; });
+    dispatch_once(&wo, ^{ webVerbs = [NSSet setWithArray:@[@"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBSTATE"]]; });
     if (isSB && [webVerbs containsObject:verb])
         return @"SKIP web-verb (SpringBoard không có WKWebView)";
 
@@ -2663,6 +2721,8 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
             return IAWebScrollTo(p[1]);
         if ([verb isEqualToString:@"WEBCLICK"] && p.count >= 2)  // safari.click: "WEBCLICK <b64field>"
             return IAWebClick(p[1]);
+        if ([verb isEqualToString:@"WEBCOORD"] && p.count >= 2)  // daemon gọi để lấy tọa độ rồi tap HID
+            return IAWebCoord(p[1]);
         if ([verb isEqualToString:@"WEBSTATE"])                  // safari.load: "WEBSTATE" → document.readyState
             return IAWebReadyState();
         if ([verb isEqualToString:@"FX"] && p.count >= 2) {

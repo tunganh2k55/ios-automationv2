@@ -1,0 +1,14 @@
+Origin: iOSAuto Local
+Label: iOSAuto
+Suite: stable
+Version: 1.0.19
+Codename: ios
+Architectures: iphoneos-arm64
+Components: main
+Description: iOSAuto Local Repo
+MD5Sum:
+ 3cf78eadb2478c45ef47e218af425651      424 Packages
+ 5b4a4437430d5110b2668754e286f5fa      316 Packages.gz
+SHA256:
+ 9b2aca9ec7567005ab20d1643f83413e7b395c352f3981ee857a54f0671981ae      424 Packages
+ 27a977c76b63409a2b93ad865482a0b9799f851282428034e3483cb82aa4b9b4      316 Packages.gz

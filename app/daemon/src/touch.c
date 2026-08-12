@@ -2,6 +2,10 @@
 #include "fbcap.h"
 #include "lua_bind.h"
 #include "log.h"
+
+// C wrapper từ STHIDEventGenerator.mm (system-level HID tap)
+extern void sthid_tap(float x, float y);
+extern int sthid_available(void);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -559,22 +563,46 @@ int touch_safari_swipe(const char *field, char *reply, size_t rlen) {
     return r;
 }
 
-// safari.click (ẨN): "WEBCLICK <b64field>" — bấm element web khớp field (cuộn tới + pointer/mouse +
-// el.click()). field base64. App foreground; timeout 4.5s.
+// safari.click (ẨN): tìm element → lấy tọa độ (WEBCOORD) → tap bằng STHIDEventGenerator (system-level).
+// System HID tap hiện bàn phím cho input fields (khác in-process HID của tweak).
 int touch_safari_click(const char *field, char *reply, size_t rlen) {
     if (!field) field = "";
     size_t fl = 0;
     char *bf = b64_encode((const unsigned char *)field, strlen(field), &fl);
     if (!bf) { snprintf(reply, rlen, "oom base64"); return 1; }
-    size_t vlen = 9 + fl + 2;                          // "WEBCLICK " + bf + "\n"
+    size_t vlen = 9 + fl + 2;                          // "WEBCOORD " + bf + "\n"
     char *verb = malloc(vlen);
     if (!verb) { free(bf); snprintf(reply, rlen, "oom verb"); return 1; }
-    snprintf(verb, vlen, "WEBCLICK %s\n", bf);
+    snprintf(verb, vlen, "WEBCOORD %s\n", bf);
     free(bf);
-    log_msg("safari.click: field=%.40s → app foreground", field);
-    int r = send_verb_core_to(verb, reply, rlen, 1, 0, 4500);
+    log_msg("safari.click: field=%.40s → WEBCOORD", field);
+
+    char coord_reply[256] = {0};
+    int r = send_verb_core_to(verb, coord_reply, sizeof(coord_reply), 1, 0, 4500);
     free(verb);
-    return r;
+
+    if (r != 0 || strncmp(coord_reply, "OK webcoord ", 12) != 0) {
+        snprintf(reply, rlen, "%s", coord_reply[0] ? coord_reply : "ERR webcoord timeout");
+        return 1;
+    }
+
+    // Parse "OK webcoord x,y"
+    float x = 0, y = 0;
+    if (sscanf(coord_reply + 12, "%f,%f", &x, &y) != 2) {
+        snprintf(reply, rlen, "ERR parse coords: %s", coord_reply);
+        return 1;
+    }
+
+    log_msg("safari.click: coord %.0f,%.0f → sthid_tap", x, y);
+
+    if (!sthid_available()) {
+        snprintf(reply, rlen, "ERR STHIDEventGenerator không sẵn sàng");
+        return 1;
+    }
+
+    sthid_tap(x, y);
+    snprintf(reply, rlen, "OK webclick %.0f,%.0f (HID)", x, y);
+    return 0;
 }
 
 // safari.load (ẨN): chờ trang web app foreground load XONG (document.readyState == 'complete').

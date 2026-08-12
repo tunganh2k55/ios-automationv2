@@ -1,0 +1,13 @@
+Package: com.iosauto
+Version: 1.0.19
+Architecture: iphoneos-arm64
+Maintainer: iOSAuto Team
+Depends: firmware (>= 15.0)
+Filename: ./com.iosauto_1.0.19_iphoneos-arm64.deb
+Size: 2317118
+MD5sum: 06cfd175572d2ab6c60a65618085622c
+SHA256: c5bffe2c83f6977455d55e8d83ab2e588ee914a51b2f530894ffc2ff2b180cb1
+Section: Tweaks
+Description: iOSAuto - tu dong hoa iPhone. iOS 15-16 rootless.
+Name: iOSAuto
+Author: iOSAuto Team

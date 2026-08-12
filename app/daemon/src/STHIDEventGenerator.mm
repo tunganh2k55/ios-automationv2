@@ -497,3 +497,15 @@ static uint32_t hidUsageCodeForCharacter(NSString *key) {
 }
 
 @end
+
+// C wrapper để touch.c có thể gọi tap HID
+extern "C" void sthid_tap(float x, float y) {
+    STHIDEventGenerator *gen = [STHIDEventGenerator sharedGenerator];
+    if ([gen isAvailable]) {
+        [gen tap:CGPointMake(x, y)];
+    }
+}
+
+extern "C" int sthid_available(void) {
+    return [[STHIDEventGenerator sharedGenerator] isAvailable] ? 1 : 0;
+}
