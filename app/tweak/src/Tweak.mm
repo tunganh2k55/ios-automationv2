@@ -470,73 +470,12 @@ static void IAShowArrow(CGPoint a, CGPoint b) {
 // ---- VNC HID INJECTION TRỰC TIẾP: down/move/up qua _enqueueHIDEvent, KHÔNG qua IATap/IASwipe ----
 // Mục tiêu: noVNC gửi raw RFB pointer lifecycle (down→move...→up) → TrollVNC inject HID system-level.
 // Giữ nguyên 1 contact identity từ down qua mọi move tới up, như ngón tay thật.
-// KHÔNG quyết định tap vs swipe ở cuối — để iOS tự nhận diện gesture từ chuỗi HID events.
-static BOOL IAHIDAvailable(void);   // forward-decl (định nghĩa ở dưới, dùng cho VNC)
-static UITouch *gVNCTouch = nil;   // touch liên tục cho VNC HID injection
-static BOOL gVNCActive = NO;      // đang trong chuỗi down→...→up
-// HID injection cho VNC: emit single digitizer event tại phase (down/move/up).
-// mask: 0x3 = range|touch (chạm), 0x2 = range (nhấc). Reuse từ IAEmitDigit.
-static void IAVNCEmit(CGPoint pt, BOOL down, BOOL moved) {
-    UIApplication *app = [UIApplication sharedApplication];
-    SEL sel = NSSelectorFromString(@"_enqueueHIDEvent:");
-    if (![app respondsToSelector:sel]) return;
-    UIWindow *win = IAActiveWindow(); if (!win) return;
-    CGSize scr = win.bounds.size; if (scr.width <= 0 || scr.height <= 0) return;
-    CGFloat nx = pt.x / scr.width, ny = pt.y / scr.height;
-    uint32_t mask = down ? 0x3 : 0x2;
-    uint64_t ts = mach_absolute_time();
-    IOHIDEventRef e = IOHIDEventCreateDigitizerEvent(kCFAllocatorDefault, ts, 0x23, 0, 0, mask, 0,
-                                                     nx, ny, 0, 0, 0, down, down, 0);
-    if (!e) return;
-    IOHIDEventRef f = IOHIDEventCreateDigitizerFingerEvent(kCFAllocatorDefault, ts, 2, 2, mask,
-                                                           nx, ny, 0, 0, 0, down, down, 0);
-    if (f) { IOHIDEventAppendEvent(e, f, 0); CFRelease(f); }
-    ((void (*)(id, SEL, IOHIDEventRef))objc_msgSend)(app, sel, e);
-    CFRelease(e);
-}
+static BOOL IAHIDAvailable(void);   // forward-decl
 
-// VNC pointer handler: raw HID injection (down/move/up) mà KHÔNG quyết định tap/swipe.
-// Log format: VNC HID DOWN/MOVE/UP x=... y=...
-static NSString *IAVNCPointer(unichar phase, CGPoint pt) {
-    __block NSString *diag = @"ERR vnc";
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        @try {
-            if (!IAHIDAvailable()) {
-                diag = @"ERR vnc no-hid (_enqueueHIDEvent: không có)";
-                return;
-            }
-            if (phase == 'd') {
-                gVNCActive = YES;
-                IAVNCEmit(pt, YES, NO);   // HID touch down
-                if (gFxEnabled) IAShowDot(pt);
-                diag = [NSString stringWithFormat:@"VNC HID DOWN x=%d y=%d", (int)pt.x, (int)pt.y];
-            } else if (phase == 'm') {
-                if (!gVNCActive) {
-                    // Nếu chưa có down, bắt đầu chuỗi mới
-                    gVNCActive = YES;
-                    IAVNCEmit(pt, YES, NO);
-                    diag = [NSString stringWithFormat:@"VNC HID DOWN (from move) x=%d y=%d", (int)pt.x, (int)pt.y];
-                } else {
-                    IAVNCEmit(pt, YES, YES);   // HID touch move (vẫn down)
-                    diag = [NSString stringWithFormat:@"VNC HID MOVE x=%d y=%d", (int)pt.x, (int)pt.y];
-                }
-            } else {   // 'u'
-                if (gVNCActive) {
-                    IAVNCEmit(pt, NO, NO);    // HID touch up
-                    gVNCActive = NO;
-                }
-                diag = [NSString stringWithFormat:@"VNC HID UP x=%d y=%d", (int)pt.x, (int)pt.y];
-            }
-        } @catch (NSException *e) { diag = [@"ERR vnc " stringByAppendingString:(e.reason ?: @"?")]; }
-    });
-    return diag;
-}
-
-// ---- ĐIỀU KHIỂN REALTIME (PTR cũ): 1 UITouch LIÊN TỤC theo con trỏ (bám tay), in-app sendEvent ----
+// ---- ĐIỀU KHIỂN REALTIME (PTR): 1 UITouch LIÊN TỤC theo con trỏ (bám tay), in-app sendEvent ----
 // APP: touch tổng hợp realtime (cuộn/kéo theo tay). SPRINGBOARD: KHÔNG realtime được (touch tổng
 // hợp/ép offset → trang kế lazy-load render ĐEN) → dùng IASwipe (animation sạch) và kích hoạt SỚM
 // ngay khi kéo ngang đủ xa (không đợi thả) cho phản hồi nhanh. Tap dùng IATap.
-// LƯU Ý: Đây là logic cũ cho REST/Lua automation. VNC path dùng IAVNCPointer() ở trên.
 static NSString *IASwipe(CGPoint a, CGPoint b, double dur);   // forward-decl
 static NSString *IATap(CGPoint pt);                          // forward-decl (VNC tap dùng chung đường mạnh)
 static UITouch *gLiveTouch = nil;
