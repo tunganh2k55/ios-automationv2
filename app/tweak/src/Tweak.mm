@@ -2203,20 +2203,13 @@ static NSString *IAWebClick(NSString *b64field) {
     });
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)));
     NSLog(@"[IAWebClick] after wait: needHID=%d screenPt=%.0f,%.0f result=%@", needHID, screenPt.x, screenPt.y, result);
-    // Sau khi có screen coords, thực hiện HID tap THẬT (hiện bàn phím, kích hoạt gesture)
+    // Sau khi có screen coords, gọi IATap (có đầy đủ xử lý WKWebView: hook + HID + JS fallback)
     if (needHID && (screenPt.x > 0 || screenPt.y > 0)) {
-        dispatch_sync(dispatch_get_main_queue(), ^{
-            IAShowDot(screenPt);   // hiệu ứng chấm đỏ
-            BOOL hidOK = IAHIDAvailable();
-            NSLog(@"[IAWebClick] HID available=%d, tapping at %.0f,%.0f", hidOK, screenPt.x, screenPt.y);
-            if (hidOK) {
-                IADoTapHID(screenPt);   // HID tap THẬT như ngón tay
-                NSLog(@"[IAWebClick] IADoTapHID done");
-            } else {
-                IADoTapNatural(screenPt);   // fallback synthetic touch
-                NSLog(@"[IAWebClick] IADoTapNatural done (fallback)");
-            }
-        });
+        NSLog(@"[IAWebClick] calling IATap at %.0f,%.0f", screenPt.x, screenPt.y);
+        NSString *tapResult = IATap(screenPt);
+        NSLog(@"[IAWebClick] IATap result=%@", tapResult);
+        // Gộp kết quả: giữ thông tin coords từ webclick, thêm thông tin tap
+        result = [NSString stringWithFormat:@"%@ tap:%@", result, tapResult];
     } else {
         NSLog(@"[IAWebClick] SKIP tap: needHID=%d screenPt=%.0f,%.0f", needHID, screenPt.x, screenPt.y);
     }
