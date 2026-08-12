@@ -472,9 +472,12 @@ static void IAShowArrow(CGPoint a, CGPoint b) {
 // hợp/ép offset → trang kế lazy-load render ĐEN) → dùng IASwipe (animation sạch) và kích hoạt SỚM
 // ngay khi kéo ngang đủ xa (không đợi thả) cho phản hồi nhanh. Tap dùng IATap.
 static NSString *IASwipe(CGPoint a, CGPoint b, double dur);   // forward-decl
+static NSString *IATap(CGPoint pt);                          // forward-decl (VNC tap dùng chung đường mạnh)
 static UITouch *gLiveTouch = nil;
 static CGPoint gPtrStart; static BOOL gSbSwiped = NO;
 static BOOL gSwitcherMode = NO;   // App Switcher đang mở → dùng synthetic touch (không paging home)
+// VNC realtime trong APP: gom cử chỉ d→(m…)→u rồi quyết định ở 'u' (tap vs swipe).
+static BOOL gPtrMoved = NO, gPtrActive = NO; static double gPtrT0 = 0;
 static NSString *IAPointer(unichar phase, CGPoint pt) {
     BOOL isSB = [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
     if (isSB) {
@@ -502,22 +505,49 @@ static NSString *IAPointer(unichar phase, CGPoint pt) {
         }
         // gSwitcherMode: rơi xuống synthetic dưới (cuộn card ngang / vuốt LÊN đóng app / chọn app)
     }
-    __block NSString *diag = @"OK ptr";
-    dispatch_sync(dispatch_get_main_queue(), ^{
-        @try {
-            if (phase == 'd') {
-                gLiveTouch = IASynthPhase(pt, UITouchPhaseBegan, nil, YES);
-                IAShowDot(pt);
-            } else if (phase == 'm') {
-                if (!gLiveTouch) gLiveTouch = IASynthPhase(pt, UITouchPhaseBegan, nil, YES);
-                else gLiveTouch = IASynthPhase(pt, UITouchPhaseMoved, gLiveTouch, NO);
-            } else {   // 'u'
-                if (gLiveTouch) IASynthPhase(pt, UITouchPhaseEnded, gLiveTouch, NO);
-                gLiveTouch = nil;
-            }
-        } @catch (NSException *e) { gLiveTouch = nil; diag = [@"ERR ptr " stringByAppendingString:(e.reason ?: @"?")]; }
-    });
-    return diag;
+
+    // SPRINGBOARD (App Switcher): giữ synthetic thô — cuộn/đóng/chọn card cần touch liên tục realtime.
+    if (isSB) {
+        __block NSString *diag = @"OK ptr";
+        dispatch_sync(dispatch_get_main_queue(), ^{
+            @try {
+                if (phase == 'd') {
+                    gLiveTouch = IASynthPhase(pt, UITouchPhaseBegan, nil, YES);
+                    IAShowDot(pt);
+                } else if (phase == 'm') {
+                    if (!gLiveTouch) gLiveTouch = IASynthPhase(pt, UITouchPhaseBegan, nil, YES);
+                    else gLiveTouch = IASynthPhase(pt, UITouchPhaseMoved, gLiveTouch, NO);
+                } else {   // 'u'
+                    if (gLiveTouch) IASynthPhase(pt, UITouchPhaseEnded, gLiveTouch, NO);
+                    gLiveTouch = nil;
+                }
+            } @catch (NSException *e) { gLiveTouch = nil; diag = [@"ERR ptr " stringByAppendingString:(e.reason ?: @"?")]; }
+        });
+        return diag;
+    }
+
+    // APP THƯỜNG: KHÔNG bơm synthetic thô (nút/UIControl/UIGestureRecognizer/SwiftUI/WebKit hay bỏ qua
+    // began/ended cụt → "OK ptr" nhưng không ăn). Thay vào đó GOM cử chỉ rồi ở 'u' gọi ĐÚNG đường mạnh:
+    //   - di chuyển đủ xa → IASwipe (như lệnh SWIPE): drive được scroll/pan/paging.
+    //   - đứng yên       → IATap  (như lệnh TAP): HID enqueue + natural tap + delegate list/tab.
+    if (phase == 'd') {
+        gPtrStart = pt; gPtrMoved = NO; gPtrActive = YES; gPtrT0 = CFAbsoluteTimeGetCurrent();
+        IAShowDot(pt);
+        return @"OK ptr d";
+    } else if (phase == 'm') {
+        if (gPtrActive && hypot(pt.x - gPtrStart.x, pt.y - gPtrStart.y) > 12) gPtrMoved = YES;
+        return @"OK ptr m";
+    } else {   // 'u'
+        if (!gPtrActive) return @"OK ptr u0";
+        gPtrActive = NO;
+        CGFloat dist = hypot(pt.x - gPtrStart.x, pt.y - gPtrStart.y);
+        if (gPtrMoved || dist > 12) {
+            double dur = CFAbsoluteTimeGetCurrent() - gPtrT0;
+            if (dur < 0.05) dur = 0.2; else if (dur > 1.2) dur = 1.2;
+            return IASwipe(gPtrStart, pt, dur);
+        }
+        return IATap(pt);
+    }
 }
 
 // Quét ĐỆ QUY toàn hierarchy tìm UITabBar mà điểm pt (toạ độ window) nằm trong frame.
