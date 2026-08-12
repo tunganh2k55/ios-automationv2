@@ -26,6 +26,9 @@
 	<true/>
 	<key>platform-application</key>
 	<true/>
+	<!-- HID EVENT DISPATCH (như TrollVNC): inject touch qua IOHIDEventSystemClientDispatchEvent -->
+	<key>com.apple.private.hid.client.event-dispatch</key>
+	<true/>
 	<!-- CHỤP FRAMEBUFFER THẬT (như TrollVNC): mở IOMobileFramebuffer + IOSurfaceAccelerator -->
 	<key>com.apple.private.IOSurface.protected-access</key>
 	<true/>
@@ -50,6 +53,7 @@
 		<string>AGXDevice</string>
 		<string>AGXDeviceUserClient</string>
 		<string>AGXSharedUserClient</string>
+		<string>IOHIDEventSystemClient</string>
 	</array>
 </dict>
 </plist>
