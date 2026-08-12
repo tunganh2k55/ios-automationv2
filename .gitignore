@@ -8,6 +8,7 @@
 *.tipa
 # NGOẠI LỆ: repo Sileo phục vụ tại iosautos.com/repo CẦN commit .deb
 !web-license/repo/debs/*.deb
+!web-license/test-repo/debs/*.deb
 node_modules/
 *.log
 
