@@ -6,9 +6,8 @@ Codename: ios
 Architectures: iphoneos-arm64
 Components: main
 Description: iOSAuto — iPhone automation (iOS 15-16 rootless)
-MD5Sum:
- c21dbdc7ff4721b990e87e68289eca5d 749 Packages
- df80595637834940b060ea53de6f24a2 443 Packages.gz
+ 304dd34eb97d4da6e714aeb117958b49 768 Packages
+ 887f466e37363fe2c7e022a22d3d2e0a 462 Packages.gz
 SHA256:
- 25272a8a9a64f43ab7d59240c5f55f746786b70bf7dc2e8a248fe8d0b8d04913 749 Packages
- 3f31d260d75248e252ffa5a9f9f3526869631a6c91f5f2f6c91165329043a141 443 Packages.gz
+ 04c13b62486d07a358ceb736868a285d17776107274a7f1deed61f88d6549130 768 Packages
+ e4dba1d1773c11a599471b4cd67f28768f27f0895a96baa7de114b63bd15a763 462 Packages.gz
