@@ -21,7 +21,7 @@ iosautod_CCFLAGS = -fobjc-arc -Isrc -Ilua -Iinclude -std=c++14 -Wno-deprecated-d
 # IOSurfaceAccelerator nạp qua dlopen/dlsym → KHÔNG link.
 # SystemConfiguration (proxy) + LaunchServices (openUrl): API bị "prohibited" trên iOS SDK →
 # nạp động dlopen/dlsym trong luaext.m, KHÔNG link.
-iosautod_FRAMEWORKS = Foundation CoreFoundation IOSurface CoreGraphics ImageIO Security Vision UIKit
+iosautod_FRAMEWORKS = Foundation CoreFoundation IOSurface CoreGraphics ImageIO Security Vision
 
 # ===== VNC SERVER (libvncserver) =====
 # Enable VNC server tích hợp (comment dòng dưới để tắt)

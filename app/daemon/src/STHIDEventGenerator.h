@@ -20,6 +20,7 @@ static NSUInteger const HIDMaxTouchCount = 30;
 + (STHIDEventGenerator *)sharedGenerator;
 
 - (void)setPhysicalScreenSize:(CGSize)size;
+- (CGSize)physicalScreenSize;
 - (BOOL)isAvailable;
 
 - (void)touchDown:(CGPoint)location;

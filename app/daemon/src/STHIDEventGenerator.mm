@@ -12,7 +12,6 @@
 #endif
 
 #import <Foundation/Foundation.h>
-#import <UIKit/UIKit.h>
 #import <mach/mach_time.h>
 #import <dlfcn.h>
 
@@ -163,6 +162,10 @@ NS_INLINE void delayBetweenMove(int eventIndex, double elapsed) {
 - (void)setPhysicalScreenSize:(CGSize)size {
     _physicalScreenSize = size;
     log_msg("STHIDEventGenerator: screen size set to %.0fx%.0f", size.width, size.height);
+}
+
+- (CGSize)physicalScreenSize {
+    return _physicalScreenSize;
 }
 
 - (BOOL)isAvailable {
@@ -499,14 +502,31 @@ static uint32_t hidUsageCodeForCharacter(NSString *key) {
 
 @end
 
+// Lấy kích thước màn hình point từ touch.c
+extern void touch_screen_size(int *w, int *h);
+
 // C wrapper để touch.c có thể gọi tap HID
 // x,y là tọa độ POINT (từ tweak/UIKit). STHIDEventGenerator dùng tọa độ PIXEL.
-// Nhân với UIScreen.scale để chuyển đổi.
+// Tính scale = pixel_width / point_width (không dùng UIScreen vì daemon không có UI).
 extern "C" void sthid_tap(float x, float y) {
     STHIDEventGenerator *gen = [STHIDEventGenerator sharedGenerator];
     if ([gen isAvailable]) {
-        CGFloat scale = [UIScreen mainScreen].scale;  // @2x hoặc @3x
+        // Lấy point size từ touch.c (375x667 cho iPhone 7)
+        int pw = 0, ph = 0;
+        touch_screen_size(&pw, &ph);
+
+        // Lấy pixel size từ generator (750x1334 cho iPhone 7)
+        CGSize pixelSize = [gen physicalScreenSize];
+
+        // Tính scale: pixel / point. Fallback scale=2 nếu chưa có thông tin.
+        CGFloat scale = 2.0;
+        if (pw > 0 && pixelSize.width > 0) {
+            scale = pixelSize.width / (CGFloat)pw;
+        }
+
         CGPoint pixelPt = CGPointMake(x * scale, y * scale);
+        log_msg("sthid_tap: point(%.0f,%.0f) * scale=%.1f → pixel(%.0f,%.0f)",
+                x, y, scale, pixelPt.x, pixelPt.y);
         [gen tap:pixelPt];
     }
 }
