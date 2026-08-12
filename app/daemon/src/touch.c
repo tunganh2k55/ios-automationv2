@@ -607,6 +607,26 @@ int touch_safari_click(const char *field, char *reply, size_t rlen) {
     return 0;
 }
 
+// safari.checkbox (ẨN): "WEBCHECK <b64field>" — tweak lo TRỌN gói (tìm input checkbox/radio thật,
+// tap HID vào label nếu input ẩn, verify .checked, .click() JS bù). field base64 (mang được tiếng
+// Nhật/ký tự đặc biệt gọn 1 dòng). App foreground; timeout 12s (đủ cho pha tìm + tap + đợi toggle
+// 0.4s + verify JS). reply nhận diag từ tweak.
+int touch_safari_checkbox(const char *field, char *reply, size_t rlen) {
+    if (!field) field = "";
+    size_t fl = 0;
+    char *bf = b64_encode((const unsigned char *)field, strlen(field), &fl);
+    if (!bf) { snprintf(reply, rlen, "oom base64"); return 1; }
+    size_t vlen = 9 + fl + 2;                          // "WEBCHECK " + bf + "\n"
+    char *verb = malloc(vlen);
+    if (!verb) { free(bf); snprintf(reply, rlen, "oom verb"); return 1; }
+    snprintf(verb, vlen, "WEBCHECK %s\n", bf);
+    free(bf);
+    log_msg("safari.checkbox: field=%.40s → WEBCHECK (app foreground)", field);
+    int r = send_verb_core_to(verb, reply, rlen, 1, 0, 12000);
+    free(verb);
+    return r;
+}
+
 // safari.load (ẨN): chờ trang web app foreground load XONG (document.readyState == 'complete').
 // LẶP gọi verb "WEBSTATE" (mỗi lần nhanh) — nghỉ 350ms giữa các lần — tới khi 'complete' hoặc hết
 // `timeout_sec` giây (mặc định 60, trần 600). Không giữ 1 socket mở suốt 60s (tránh chẹn IPC/watchdog).

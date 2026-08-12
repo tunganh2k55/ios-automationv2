@@ -91,6 +91,12 @@ int touch_safari_swipe(const char *field, char *reply, size_t rlen);
 // — tâm element đã bấm / "ERR ..."). Trả 0 nếu OK.
 int touch_safari_click(const char *field, char *reply, size_t rlen);
 
+// safari.checkbox (ẨN): TICK checkbox/radio web khớp `field` CHO CHẮC. Tweak tự lần ra <input> thật
+// (dù field trỏ vào label), tap vào label hiển thị nếu input bị ẩn/quá nhỏ, rồi VERIFY .checked và
+// .click() JS bù nếu HID tap trượt. Đã tick sẵn thì bỏ qua. reply nhận diag ("OK webcheck ..." /
+// "ERR ..."). Trả 0 nếu ô đã được tick.
+int touch_safari_checkbox(const char *field, char *reply, size_t rlen);
+
 // safari.load (ẨN): chờ trang web app foreground load XONG (document.readyState == 'complete').
 // Lặp hỏi readyState tới khi 'complete' hoặc hết `timeout_sec` giây (mặc định 60, trần 600). reply
 // nhận diag ("OK loaded ..." / "TIMEOUT ..." / "...no-webview..."). Trả 0 nếu trang đã load xong.

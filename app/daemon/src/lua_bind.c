@@ -686,6 +686,22 @@ static int l_safariClick(lua_State *L) {
     return 2;
 }
 
+// safari.checkbox(field) → true/false, diag. TICK checkbox/radio web khớp `field` CHO CHẮC — khác
+// safari.click: tìm ĐÚNG <input> (dù field trỏ vào label), tap vào LABEL hiển thị nếu input bị ẩn
+// (form Nhật hay style label đè lên input opacity:0), rồi VERIFY .checked + .click() JS bù nếu tap
+// trượt. Ô đã tick sẵn coi như thành công (không bấm lại để khỏi bỏ tick). Hàm ẨN — dùng cho các ô
+// "đồng ý" (利用規約 / プライバシーポリシー…) cần tick chắc chắn.
+static int l_safariCheckbox(lua_State *L) {
+    if (g_cancel) return luaL_error(L, "đã dừng");
+    const char *field = luaL_checkstring(L, 1);
+    char reply[600] = {0};
+    int rc = touch_safari_checkbox(field, reply, sizeof(reply));
+    if (g_cancel) return luaL_error(L, "đã dừng");
+    lua_pushboolean(L, rc == 0 && strncmp(reply, "OK", 2) == 0);
+    lua_pushstring(L, reply);
+    return 2;
+}
+
 // safari.load([giây]) → true/false, diag. Chờ trang web app foreground load XONG
 // (document.readyState == 'complete'). Mặc định tối đa 60 giây (trần 600). Trả true nếu load xong,
 // false nếu hết giờ / không có trang web foreground. Hàm ẨN (không có trong gợi ý syntax).
@@ -845,7 +861,7 @@ static void register_funcs(lua_State *L) {
     lua_register(L, "clipText", l_clipText);
     // Bảng ẨN `safari.*` (không đưa vào gợi ý syntax) — safari.fill(field, value) điền ô web.
     {
-        static const luaL_Reg safariFns[] = { {"fill", l_safariFill}, {"type", l_safariType}, {"clear", l_safariClear}, {"swipe", l_safariSwipe}, {"click", l_safariClick}, {"load", l_safariLoad}, {NULL, NULL} };
+        static const luaL_Reg safariFns[] = { {"fill", l_safariFill}, {"type", l_safariType}, {"clear", l_safariClear}, {"swipe", l_safariSwipe}, {"click", l_safariClick}, {"checkbox", l_safariCheckbox}, {"load", l_safariLoad}, {NULL, NULL} };
         luaL_newlib(L, safariFns);
         lua_setglobal(L, "safari");
     }

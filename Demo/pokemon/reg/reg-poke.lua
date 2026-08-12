@@ -400,6 +400,24 @@ local function clickField(field, label)
     return ok
 end
 
+-- checkboxWait: safari.checkbox có chờ element (mặc định 10s, thử mỗi 0.5s).
+local function checkboxWait(field, timeout, gap)
+    return waitFor(function() return safari.checkbox(field) end, timeout, gap)
+end
+
+-- checkboxField: tick 1 CHECKBOX rồi notify gọn (label để hiển thị). Trả ok. Khác clickField:
+-- safari.checkbox lo phần tìm ĐÚNG input, tap vào label nếu input bị ẩn, và VERIFY .checked (chuẩn
+-- hơn cho ô "đồng ý" — safari.click chỉ tap tọa độ, dễ trượt/không toggle nếu input ẩn sau style).
+local function checkboxField(field, label)
+    local ok, diag = checkboxWait(field, 10)
+    if ok then
+        notify("Đã tick " .. label, 2)
+    else
+        notify("Tick " .. label .. " lỗi: " .. tostring(diag), 3)
+    end
+    return ok
+end
+
 -- pad2: số → chuỗi 2 chữ số ("5" → "05") để khớp value option tháng/ngày ("01".."12"/"01".."31").
 local function pad2(n)
     n = tonumber(n)
@@ -540,13 +558,13 @@ function main()
   -- Tích 2 ô đồng ý (dùng "#id" cho chính xác — "terms" là chuỗi con của nhiều thuộc tính).
   -- QUY TẮC: BẤM KHÔNG THÀNH CÔNG = account THẤT BẠI luôn (không cố tiếp) → upload "failed" + kết thúc
   -- lần reg này (vòng ngoài sẽ sang account kế).
-  if not clickField("#terms", "đồng ý điều khoản (利用規約)") then
-    return regFailed("Bấm đồng ý điều khoản thất bại", content)
+  if not checkboxField("#terms", "đồng ý điều khoản (利用規約)") then
+    return regFailed("Tick đồng ý điều khoản thất bại", content)
   end
   sleep(0.5)
 
-  if not clickField("#privacyPolicy", "đồng ý chính sách bảo mật (プライバシーポリシー)") then
-    return regFailed("Bấm đồng ý chính sách bảo mật thất bại", content)
+  if not checkboxField("#privacyPolicy", "đồng ý chính sách bảo mật (プライバシーポリシー)") then
+    return regFailed("Tick đồng ý chính sách bảo mật thất bại", content)
   end
 
   sleep(0.5)

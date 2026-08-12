@@ -2284,6 +2284,108 @@ static NSString *IAWebClick(NSString *b64field) {
     return result;
 }
 
+// safari.checkbox (ẨN): TICK 1 checkbox/radio web khớp `field` CHO CHẮC. Khác safari.click:
+//  (1) tìm ĐÚNG <input type=checkbox|radio> — nếu field trỏ vào <label>/element bọc ngoài thì lần
+//      ra input liên kết (querySelector con / htmlFor / label bọc ngoài);
+//  (2) nếu input bị ẩn/quá nhỏ (nhiều form Nhật style <label> đè lên input opacity:0) thì HID tap
+//      vào LABEL hiển thị thay vì input → không trượt;
+//  (3) ĐÃ tick sẵn thì BỎ QUA (không bấm để tránh gạt bỏ tick);
+//  (4) sau HID tap KIỂM TRA lại .checked; nếu vẫn chưa tick thì .click() JS bù rồi kiểm tra lần nữa.
+// b64field: base64 (JS tự giải mã UTF-8). Trả "OK webcheck ..." | "ERR webcheck ...".
+static NSString *IAWebCheck(NSString *b64field) {
+    if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
+        return @"ERR webcheck: cần app foreground (không phải màn hình chính)";
+    if (!b64field) b64field = @"";
+    SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
+
+    // ----- Pha A (main): tìm checkbox, cuộn tới giữa màn, lấy tọa độ tap target + trạng thái checked.
+    //       Stash input lên window.__iacb để pha C đọc/click lại. -----
+    __block UIView *wv = nil;
+    __block NSString *result = @"ERR webcheck no-webview";
+    __block CGPoint screenPt = CGPointZero;
+    __block BOOL found = NO, alreadyChecked = NO;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIWindow *win = IAActiveWindow();
+            wv = win ? IAFindWebView(win) : nil;
+            if (!wv && win.windowScene)
+                for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webcheck no-webview"; dispatch_semaphore_signal(sem); return; }
+            NSString *js = [NSString stringWithFormat:
+                @"(function(bf){"
+                "function d(b){try{return decodeURIComponent(escape(atob(b)));}catch(e){return atob(b);}}"
+                "var field=d(bf),el=null;"
+                "try{el=document.querySelector(field);}catch(e){}"                          // 1) CSS selector
+                "if(!el){var f=field.toLowerCase();"                                          // 2) khớp thuộc tính/label
+                "var L=document.querySelectorAll('input[type=checkbox],input[type=radio]');"
+                "for(var i=0;i<L.length;i++){var e=L[i];"
+                "var lab='';if(e.labels){for(var j=0;j<e.labels.length;j++)lab+=' '+(e.labels[j].textContent||'');}"
+                "var hay=[e.name,e.id,e.value,e.getAttribute('aria-label'),lab].join(' ').toLowerCase();"
+                "if(hay.indexOf(f)>=0){el=e;break;}}}"
+                "if(!el)return 'noel';"
+                "if(!(el.tagName==='INPUT'&&(el.type==='checkbox'||el.type==='radio'))){"    // field trỏ vào label → lần ra input
+                "var inp=el.querySelector&&el.querySelector('input[type=checkbox],input[type=radio]');"
+                "if(!inp&&el.htmlFor)inp=document.getElementById(el.htmlFor);"
+                "if(!inp&&el.closest){var lb=el.closest('label');if(lb)inp=lb.querySelector('input[type=checkbox],input[type=radio]');}"
+                "if(inp)el=inp;}"
+                "if(!(el.tagName==='INPUT'&&(el.type==='checkbox'||el.type==='radio')))return 'notcb';"
+                "window.__iacb=el;"                                                          // stash cho pha C
+                "el.scrollIntoView({block:'center',inline:'nearest'});"
+                "var r=el.getBoundingClientRect(),st=getComputedStyle(el);"                  // chọn tap target
+                "var hidden=r.width<8||r.height<8||st.opacity==='0'||st.visibility==='hidden'||st.display==='none';"
+                "if(hidden){var lab2=null;"                                                   // input ẩn → dùng label hiển thị
+                "if(el.labels&&el.labels.length){for(var m=0;m<el.labels.length;m++){var rr=el.labels[m].getBoundingClientRect();if(rr.width>=8&&rr.height>=8){lab2=el.labels[m];break;}}}"
+                "if(!lab2&&el.closest)lab2=el.closest('label');"
+                "if(lab2){var r2=lab2.getBoundingClientRect();if(r2.width>=8&&r2.height>=8)r=r2;}}"
+                "var cx=r.left+r.width/2,cy=r.top+r.height/2;"
+                "return 'found '+(el.checked?1:0)+' '+Math.round(cx)+','+Math.round(cy);"
+                "})('%@')", b64field];
+            void (^cb)(id, id) = ^(id res, id err) {
+                if (err) { result = [@"ERR webcheck " stringByAppendingString:[err description]]; dispatch_semaphore_signal(sem); return; }
+                NSString *s = [res isKindOfClass:[NSString class]] ? (NSString *)res : @"";
+                if ([s isEqualToString:@"noel"]) { result = @"ERR webcheck: không thấy checkbox khớp"; dispatch_semaphore_signal(sem); return; }
+                if ([s isEqualToString:@"notcb"]) { result = @"ERR webcheck: element khớp không phải checkbox/radio"; dispatch_semaphore_signal(sem); return; }
+                if (![s hasPrefix:@"found "]) { result = [NSString stringWithFormat:@"ERR webcheck parse %@", s]; dispatch_semaphore_signal(sem); return; }
+                NSArray *a = [[s substringFromIndex:6] componentsSeparatedByString:@" "];   // "<c> <cx,cy>"
+                if (a.count < 2) { result = @"ERR webcheck fields"; dispatch_semaphore_signal(sem); return; }
+                alreadyChecked = [a[0] intValue] != 0;
+                NSArray *xy = [a[1] componentsSeparatedByString:@","];
+                if (xy.count < 2) { result = @"ERR webcheck coords"; dispatch_semaphore_signal(sem); return; }
+                CGFloat vx = [xy[0] floatValue], vy = [xy[1] floatValue];
+                CGRect wvFrame = [wv convertRect:wv.bounds toView:win];
+                screenPt = CGPointMake(wvFrame.origin.x + vx, wvFrame.origin.y + vy);
+                found = YES;
+                dispatch_semaphore_signal(sem);
+            };
+            ((void (*)(id, SEL, id, id))objc_msgSend)(wv, ejs, js, cb);
+        } @catch (NSException *e) {
+            result = [@"ERR webcheck " stringByAppendingString:(e.reason ?: @"?")];
+            dispatch_semaphore_signal(sem);
+        }
+    });
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)));
+    if (!found) return result;                                    // lỗi/không thấy → trả nguyên trạng
+    if (alreadyChecked) return @"OK webcheck đã tick sẵn (bỏ qua)";
+
+    // ----- Pha B: HID tap tại tọa độ tap target (như ngón tay thật) -----
+    NSString *tapResult = IATap(screenPt);
+    usleep(400000);                                               // đợi UI/JS xử lý toggle
+
+    // ----- Pha C: kiểm tra .checked; chưa tick thì .click() JS bù (isTrusted=false nhưng đảm bảo tick) -----
+    id st1 = IAWebRunJS(wv, ejs, @"(window.__iacb?(window.__iacb.checked?'1':'0'):'gone')", 3.0);
+    if ([st1 isKindOfClass:[NSString class]] && [(NSString *)st1 isEqualToString:@"1"])
+        return [NSString stringWithFormat:@"OK webcheck tick (HID tap %.0f,%.0f) %@", screenPt.x, screenPt.y, tapResult];
+    id st2 = IAWebRunJS(wv, ejs,
+        @"(function(){var el=window.__iacb;if(!el)return 'gone';"
+        "if(!el.checked)el.click();"                              // chỉ click khi CHƯA tick → không gạt bỏ
+        "el.dispatchEvent(new Event('change',{bubbles:true}));"
+        "return el.checked?'1':'0';})()", 3.0);
+    if ([st2 isKindOfClass:[NSString class]] && [(NSString *)st2 isEqualToString:@"1"])
+        return [NSString stringWithFormat:@"OK webcheck tick (JS bù sau HID) %.0f,%.0f", screenPt.x, screenPt.y];
+    return [NSString stringWithFormat:@"ERR webcheck: tap xong vẫn chưa tick (st1=%@ st2=%@)", st1, st2];
+}
+
 // safari.load (ẨN): đọc document.readyState của WKWebView app foreground → biết trang đã load xong
 // chưa. Trả "OK state <loading|interactive|complete>" hoặc ERR. Daemon LẶP gọi verb này tới khi
 // gặp 'complete' hoặc hết thời gian (mỗi lần gọi nhanh, không giữ socket 60s).
@@ -2696,14 +2798,14 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
     // OCRIMG KHÔNG gate: ảnh do SpringBoard chụp được truyền vào (tự chứa) → app foreground/nền
     // nào chạy Vision cũng cho kết quả như nhau; daemon ưu tiên app mới nhất (foreground). Gate
     // sẽ khiến app foreground SKIP nếu applicationState chưa Active kịp → OCRIMG rơi xuống SpringBoard.
-    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBSTATE"]]; });
+    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBCHECK", @"WEBSTATE"]]; });
     BOOL isSB = [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
     if (!isSB && [interact containsObject:verb] && ![self isForeground])
         return @"SKIP not-foreground";
     // Web verb (WKWebView) chỉ app foreground xử lý được. SpringBoard KHÔNG có WKWebView → SKIP để
     // daemon KHÔNG che câu trả lời thật của Safari (vd "không thấy element") bằng "cần app foreground".
     static NSSet *webVerbs; static dispatch_once_t wo;
-    dispatch_once(&wo, ^{ webVerbs = [NSSet setWithArray:@[@"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBSTATE"]]; });
+    dispatch_once(&wo, ^{ webVerbs = [NSSet setWithArray:@[@"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBCHECK", @"WEBSTATE"]]; });
     if (isSB && [webVerbs containsObject:verb])
         return @"SKIP web-verb (SpringBoard không có WKWebView)";
 
@@ -2732,6 +2834,8 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
             return IAWebClick(p[1]);
         if ([verb isEqualToString:@"WEBCOORD"] && p.count >= 2)  // daemon gọi để lấy tọa độ rồi tap HID
             return IAWebCoord(p[1]);
+        if ([verb isEqualToString:@"WEBCHECK"] && p.count >= 2)  // safari.checkbox: "WEBCHECK <b64field>"
+            return IAWebCheck(p[1]);
         if ([verb isEqualToString:@"WEBSTATE"])                  // safari.load: "WEBSTATE" → document.readyState
             return IAWebReadyState();
         if ([verb isEqualToString:@"FX"] && p.count >= 2) {
