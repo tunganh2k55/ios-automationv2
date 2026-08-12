@@ -12,6 +12,7 @@
 #endif
 
 #import <Foundation/Foundation.h>
+#import <UIKit/UIKit.h>
 #import <mach/mach_time.h>
 #import <dlfcn.h>
 
