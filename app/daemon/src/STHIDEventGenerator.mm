@@ -527,7 +527,12 @@ extern "C" void sthid_tap(float x, float y) {
         CGPoint pixelPt = CGPointMake(x * scale, y * scale);
         log_msg("sthid_tap: point(%.0f,%.0f) * scale=%.1f → pixel(%.0f,%.0f)",
                 x, y, scale, pixelPt.x, pixelPt.y);
-        [gen tap:pixelPt];
+
+        // Dùng touchDown + liftUp riêng với delay 150ms (như VNC click thực tế)
+        // thay vì tap() chỉ 50ms - một số web element cần thời gian nhấn dài hơn
+        [gen touchDown:pixelPt];
+        usleep(150000);  // 150ms
+        [gen liftUp:pixelPt];
     }
 }
 
