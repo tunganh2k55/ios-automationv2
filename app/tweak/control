@@ -1,6 +1,6 @@
 Package: com.iosauto.touch
 Name: iOSAuto Touch
-Version: 0.5.7
+Version: 0.5.8
 Architecture: iphoneos-arm64
 Description: UIKit user-mode touch engine cho iOSAuto (Phase 4). Fat arm64+arm64e để nạp được vào SpringBoard trên A12+ (SE2/A13) → SHOT/OCR/DUMP hoạt động. Inject app foreground, không đụng backboardd.
 Maintainer: iOSAuto Team

@@ -2287,10 +2287,9 @@ static NSString *IAWebClick(NSString *b64field) {
 // safari.checkbox (ẨN): TICK 1 checkbox/radio web khớp `field` CHO CHẮC. Khác safari.click:
 //  (1) tìm ĐÚNG <input type=checkbox|radio> — nếu field trỏ vào <label>/element bọc ngoài thì lần
 //      ra input liên kết (querySelector con / htmlFor / label bọc ngoài);
-//  (2) nếu input bị ẩn/quá nhỏ (nhiều form Nhật style <label> đè lên input opacity:0) thì HID tap
-//      vào LABEL hiển thị thay vì input → không trượt;
-//  (3) ĐÃ tick sẵn thì BỎ QUA (không bấm để tránh gạt bỏ tick);
-//  (4) sau HID tap KIỂM TRA lại .checked; nếu vẫn chưa tick thì .click() JS bù rồi kiểm tra lần nữa.
+//  (2) ĐÃ tick sẵn thì BỎ QUA (không bấm để tránh gạt bỏ tick);
+//  (3) tick 1 lượt bằng .click() JS trực tiếp (KHÔNG HID tap) + phát 'input'/'change', rồi VERIFY
+//      .checked. Bỏ HID tap vì checkbox web thường không gate isTrusted — tránh 2 lượt/chấm đỏ thừa.
 // b64field: base64 (JS tự giải mã UTF-8). Trả "OK webcheck ..." | "ERR webcheck ...".
 static NSString *IAWebCheck(NSString *b64field) {
     if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
@@ -2368,22 +2367,18 @@ static NSString *IAWebCheck(NSString *b64field) {
     if (!found) return result;                                    // lỗi/không thấy → trả nguyên trạng
     if (alreadyChecked) return @"OK webcheck đã tick sẵn (bỏ qua)";
 
-    // ----- Pha B: HID tap tại tọa độ tap target (như ngón tay thật) -----
-    NSString *tapResult = IATap(screenPt);
-    usleep(400000);                                               // đợi UI/JS xử lý toggle
-
-    // ----- Pha C: kiểm tra .checked; chưa tick thì .click() JS bù (isTrusted=false nhưng đảm bảo tick) -----
-    id st1 = IAWebRunJS(wv, ejs, @"(window.__iacb?(window.__iacb.checked?'1':'0'):'gone')", 3.0);
-    if ([st1 isKindOfClass:[NSString class]] && [(NSString *)st1 isEqualToString:@"1"])
-        return [NSString stringWithFormat:@"OK webcheck tick (HID tap %.0f,%.0f) %@", screenPt.x, screenPt.y, tapResult];
-    id st2 = IAWebRunJS(wv, ejs,
+    // ----- Pha B: tick thẳng bằng JS .click() (KHÔNG HID tap). Checkbox web thường không gate isTrusted
+    //       nên 1 lượt .click() là đủ — tránh cảnh HID tap trượt rồi mới JS bù (2 lượt/chấm đỏ thừa).
+    //       .click() toggle .checked + phát 'input'/'change' cho framework (React/Vue) nghe được.
+    id st = IAWebRunJS(wv, ejs,
         @"(function(){var el=window.__iacb;if(!el)return 'gone';"
         "if(!el.checked)el.click();"                              // chỉ click khi CHƯA tick → không gạt bỏ
+        "el.dispatchEvent(new Event('input',{bubbles:true}));"
         "el.dispatchEvent(new Event('change',{bubbles:true}));"
         "return el.checked?'1':'0';})()", 3.0);
-    if ([st2 isKindOfClass:[NSString class]] && [(NSString *)st2 isEqualToString:@"1"])
-        return [NSString stringWithFormat:@"OK webcheck tick (JS bù sau HID) %.0f,%.0f", screenPt.x, screenPt.y];
-    return [NSString stringWithFormat:@"ERR webcheck: tap xong vẫn chưa tick (st1=%@ st2=%@)", st1, st2];
+    if ([st isKindOfClass:[NSString class]] && [(NSString *)st isEqualToString:@"1"])
+        return [NSString stringWithFormat:@"OK webcheck tick (JS click) %.0f,%.0f", screenPt.x, screenPt.y];
+    return [NSString stringWithFormat:@"ERR webcheck: JS click xong vẫn chưa tick (st=%@)", st];
 }
 
 // safari.load (ẨN): đọc document.readyState của WKWebView app foreground → biết trang đã load xong
