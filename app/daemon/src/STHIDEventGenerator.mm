@@ -499,10 +499,14 @@ static uint32_t hidUsageCodeForCharacter(NSString *key) {
 @end
 
 // C wrapper để touch.c có thể gọi tap HID
+// x,y là tọa độ POINT (từ tweak/UIKit). STHIDEventGenerator dùng tọa độ PIXEL.
+// Nhân với UIScreen.scale để chuyển đổi.
 extern "C" void sthid_tap(float x, float y) {
     STHIDEventGenerator *gen = [STHIDEventGenerator sharedGenerator];
     if ([gen isAvailable]) {
-        [gen tap:CGPointMake(x, y)];
+        CGFloat scale = [UIScreen mainScreen].scale;  // @2x hoặc @3x
+        CGPoint pixelPt = CGPointMake(x * scale, y * scale);
+        [gen tap:pixelPt];
     }
 }
 
