@@ -24,7 +24,10 @@ SRC_DIR = os.path.join(ROOT, "Demo", "pokemon")
 OUT_DIR = os.path.join(POKE, "scripts")
 # Nguồn Lua đã tái cấu trúc vào thư mục con theo tool (reg/, chyusen/). src_name có thể chứa
 # subpath — chỉ tên .luax đầu ra là phẳng trong scripts/ (điều exe bundle & iOSAuto resolve).
-SCRIPTS = [("reg/reg-poke.lua", "reg-poke.luax")]
+SCRIPTS = [
+    ("reg/reg-poke.lua", "reg-poke.luax"),
+    ("chyusen/chyusen.lua", "chyusen.luax"),
+]
 
 # SEED nhúng — trùng ENC_SEED[32] trong scriptcrypt.c
 ENC_SEED = bytes([
