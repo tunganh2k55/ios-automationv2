@@ -2185,99 +2185,71 @@ static NSString *IAWebCoord(NSString *b64field) {
 }
 
 // safari.click (ẨN): bấm element web khớp `field` trong WKWebView app foreground. Khớp GIỐNG
-// safari.swipe (CSS selector / text / placeholder/name/id/aria-label/label / button / link). Cuộn
-// tới element (scrollIntoView) rồi dùng HID TAP THẬT (như ngón tay) tại tâm element → hiện bàn phím
-// cho input, kích hoạt gesture handlers. b64field: base64 (JS tự giải mã UTF-8).
+// safari.swipe (CSS selector / text / placeholder/name/id/aria-label/label / button / link).
+// THUẦN JS — KHÔNG HID: cuộn tới element rồi dispatch chuỗi sự kiện (pointer/touch/mouse) + el.click()
+// TRỰC TIẾP TRÊN element khớp. Vì sao bỏ HID: trên Safari HID sinh ra mouse/click native NHƯNG lưới
+// an toàn JS (dựa cờ __iaTS = touchstart) không nhận ra → BỊ BẮN THÊM click JS lần 2 (click 2 lần)
+// và lần 2 dùng elementFromPoint ở toạ độ đã trôi sau scroll → SAI element. Chạy thuần JS trên đúng
+// element khớp: chỉ 1 click, không lệ thuộc toạ độ. b64field: base64 (JS tự giải mã UTF-8).
 static NSString *IAWebClick(NSString *b64field) {
-    NSLog(@"[IAWebClick] START b64field=%@", b64field);
-    if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"]) {
-        NSLog(@"[IAWebClick] ERR: SpringBoard không hỗ trợ");
+    if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
         return @"ERR webclick: cần app foreground (không phải màn hình chính)";
-    }
     if (!b64field) b64field = @"";
     __block NSString *result = @"ERR webclick no-webview";
-    __block CGPoint screenPt = CGPointZero;
-    __block BOOL needHID = NO;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
             UIWindow *win = IAActiveWindow();
-            NSLog(@"[IAWebClick] win=%@", win);
             UIView *wv = win ? IAFindWebView(win) : nil;
             if (!wv && win.windowScene)
                 for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
-            NSLog(@"[IAWebClick] wv=%@ class=%@", wv, wv ? NSStringFromClass(wv.class) : @"nil");
             SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
-            if (!wv || ![wv respondsToSelector:ejs]) {
-                NSLog(@"[IAWebClick] ERR: no-webview hoặc không có evaluateJS");
-                result = @"ERR webclick no-webview";
-                dispatch_semaphore_signal(sem);
-                return;
-            }
-            // JS: tìm element, cuộn tới giữa màn, trả viewport coords (không fire events)
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webclick no-webview"; dispatch_semaphore_signal(sem); return; }
+            // JS: tìm element (querySelector → thuộc tính/label → text), cuộn tới giữa màn, rồi dispatch
+            // chuỗi sự kiện chạm-đủ (pointerdown→touchstart→mousedown→pointerup→touchend→mouseup) cho
+            // site nghe gesture, sau đó el.click() 1 LẦN để kích hoạt hành động mặc định (link/onclick).
+            // KHÔNG dispatch thêm 'click' rời để tránh double (mouseup + el.click() = đúng 1 click).
             NSString *js = [NSString stringWithFormat:
                 @"(function(bf){"
                 "function d(b){try{return decodeURIComponent(escape(atob(b)));}catch(e){return atob(b);}}"
                 "var field=d(bf),el=null;"
-                "console.log('[IAWebClick] field='+field);"
-                "try{el=document.querySelector(field);}catch(e){console.log('[IAWebClick] querySelector err:'+e);}"
+                "try{el=document.querySelector(field);}catch(e){}"
                 "if(!el){var f=field.toLowerCase();"
                 "var L=document.querySelectorAll('input,textarea,select,button,a,[contenteditable],[role]');"
-                "console.log('[IAWebClick] scanning '+L.length+' elements');"
                 "for(var i=0;i<L.length;i++){var e=L[i];"
                 "var lab='';if(e.labels){for(var j=0;j<e.labels.length;j++)lab+=' '+(e.labels[j].textContent||'');}"
                 "var hay=[e.placeholder,e.name,e.id,e.type,e.value,e.getAttribute('aria-label'),lab].join(' ').toLowerCase();"
-                "if(hay.indexOf(f)>=0){el=e;console.log('[IAWebClick] found by attr: '+e.tagName+'#'+e.id);break;}}}"
+                "if(hay.indexOf(f)>=0){el=e;break;}}}"
                 "if(!el){var A=document.querySelectorAll('body *');"
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
-                "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];console.log('[IAWebClick] found by text');break;}}}"
-                "if(!el){console.log('[IAWebClick] noel');return 'noel';}"
+                "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];break;}}}"
+                "if(!el)return 'noel';"
                 "el.scrollIntoView({block:'center',inline:'center'});"
-                "var r=el.getBoundingClientRect();"
-                "var cx=r.left+r.width/2,cy=r.top+r.height/2;"
-                "console.log('[IAWebClick] rect='+JSON.stringify(r)+' center='+cx+','+cy);"
-                "return 'coord '+Math.round(cx)+','+Math.round(cy);"
+                "var r=el.getBoundingClientRect();var x=r.left+r.width/2,y=r.top+r.height/2;"
+                "function P(t){try{el.dispatchEvent(new PointerEvent(t,{bubbles:true,cancelable:true,view:window,pointerId:1,pointerType:'touch',isPrimary:true,clientX:x,clientY:y}));}catch(_){}}"
+                "function M(t){try{el.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window,clientX:x,clientY:y,button:0}));}catch(_){}}"
+                "function T(t,end){try{var tt=new Touch({identifier:1,target:el,clientX:x,clientY:y,pageX:x,pageY:y,radiusX:8,radiusY:8,force:1});"
+                "el.dispatchEvent(new TouchEvent(t,{bubbles:true,cancelable:true,view:window,touches:end?[]:[tt],targetTouches:end?[]:[tt],changedTouches:[tt]}));}catch(_){}}"
+                "P('pointerdown');T('touchstart',false);M('mousedown');P('pointerup');T('touchend',true);M('mouseup');"
+                "try{if(el.focus)el.focus();}catch(_){}"
+                "try{if(typeof el.click==='function')el.click();}catch(_){}"
+                "return 'js:'+(el.tagName||'?')+' '+Math.round(x)+','+Math.round(y);"
                 "})('%@')", b64field];
-            NSLog(@"[IAWebClick] running JS...");
             void (^cb)(id, id) = ^(id res, id err) {
-                NSLog(@"[IAWebClick] JS result=%@ err=%@", res, err);
                 if (err) { result = [@"ERR webclick " stringByAppendingString:[err description]]; dispatch_semaphore_signal(sem); return; }
-                if ([res isKindOfClass:[NSString class]] && [res isEqualToString:@"noel"]) { result = @"ERR webclick: không thấy element khớp"; dispatch_semaphore_signal(sem); return; }
-                // Parse viewport coords
                 NSString *s = [res isKindOfClass:[NSString class]] ? (NSString *)res : @"";
-                if (![s hasPrefix:@"coord "]) { result = [NSString stringWithFormat:@"ERR webclick parse %@", s]; dispatch_semaphore_signal(sem); return; }
-                NSArray *parts = [[s substringFromIndex:6] componentsSeparatedByString:@","];
-                if (parts.count < 2) { result = @"ERR webclick coords"; dispatch_semaphore_signal(sem); return; }
-                CGFloat vx = [parts[0] floatValue], vy = [parts[1] floatValue];
-                // Convert viewport coords → screen coords
-                CGRect wvFrame = [wv convertRect:wv.bounds toView:win];
-                NSLog(@"[IAWebClick] viewport=%.0f,%.0f wvFrame=%@", vx, vy, NSStringFromCGRect(wvFrame));
-                screenPt = CGPointMake(wvFrame.origin.x + vx, wvFrame.origin.y + vy);
-                needHID = YES;
-                result = [NSString stringWithFormat:@"OK webclick %d,%d (screen %.0f,%.0f)", (int)vx, (int)vy, screenPt.x, screenPt.y];
-                NSLog(@"[IAWebClick] screenPt=%.0f,%.0f", screenPt.x, screenPt.y);
+                if ([s isEqualToString:@"noel"]) { result = @"ERR webclick: không thấy element khớp"; dispatch_semaphore_signal(sem); return; }
+                if (![s hasPrefix:@"js:"]) { result = [NSString stringWithFormat:@"ERR webclick %@", s.length ? s : @"?"]; dispatch_semaphore_signal(sem); return; }
+                result = [@"OK webclick " stringByAppendingString:[s substringFromIndex:3]];   // "OK webclick <TAG> x,y"
                 dispatch_semaphore_signal(sem);
             };
             ((void (*)(id, SEL, id, id))objc_msgSend)(wv, ejs, js, cb);
         } @catch (NSException *e) {
-            NSLog(@"[IAWebClick] EXCEPTION: %@", e);
             result = [@"ERR webclick " stringByAppendingString:(e.reason ?: @"?")];
             dispatch_semaphore_signal(sem);
         }
     });
     dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(4.0 * NSEC_PER_SEC)));
-    NSLog(@"[IAWebClick] after wait: needHID=%d screenPt=%.0f,%.0f result=%@", needHID, screenPt.x, screenPt.y, result);
-    // Sau khi có screen coords, gọi IATap (có đầy đủ xử lý WKWebView: hook + HID + JS fallback)
-    if (needHID && (screenPt.x > 0 || screenPt.y > 0)) {
-        NSLog(@"[IAWebClick] calling IATap at %.0f,%.0f", screenPt.x, screenPt.y);
-        NSString *tapResult = IATap(screenPt);
-        NSLog(@"[IAWebClick] IATap result=%@", tapResult);
-        // Gộp kết quả: giữ thông tin coords từ webclick, thêm thông tin tap
-        result = [NSString stringWithFormat:@"%@ tap:%@", result, tapResult];
-    } else {
-        NSLog(@"[IAWebClick] SKIP tap: needHID=%d screenPt=%.0f,%.0f", needHID, screenPt.x, screenPt.y);
-    }
-    NSLog(@"[IAWebClick] END result=%@", result);
     return result;
 }
 
