@@ -102,4 +102,9 @@ int touch_safari_checkbox(const char *field, char *reply, size_t rlen);
 // nhận diag ("OK loaded ..." / "TIMEOUT ..." / "...no-webview..."). Trả 0 nếu trang đã load xong.
 int touch_safari_load(int timeout_sec, char *reply, size_t rlen);
 
+// safari.eval (ẨN): chạy JS TUỲ Ý (`js` phải `return` giá trị) trong WKWebView app foreground; tweak
+// GHI kết quả ra file (kết quả lớn: outerHTML/JSON) → reply "OK webeval <path>" (daemon đọc file) /
+// "ERR ...". Dùng để SOI DOM (viết selector chuẩn). Trả 0 nếu OK.
+int touch_safari_eval(const char *js, char *reply, size_t rlen);
+
 #endif

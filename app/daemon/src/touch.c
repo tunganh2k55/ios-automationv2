@@ -563,48 +563,26 @@ int touch_safari_swipe(const char *field, char *reply, size_t rlen) {
     return r;
 }
 
-// safari.click (ẨN): tìm element → lấy tọa độ (WEBCOORD) → tap bằng STHIDEventGenerator (system-level).
-// System HID tap hiện bàn phím cho input fields (khác in-process HID của tweak).
+// safari.click (ẨN): "WEBCLICK <b64field>" — tweak lo TRỌN gói THUẦN JS (tìm element → scrollIntoView
+// → dispatch pointer/touch/mouse + el.click() trực tiếp trên element khớp). KHÔNG dùng HID/tap toạ độ.
+// Vì sao bỏ HID: HID trên Safari sinh mouse/click native mà lưới an toàn JS (cờ __iaTS=touchstart)
+// không nhận ra → bắn thêm click JS lần 2 (CLICK 2 LẦN) + lần 2 dùng elementFromPoint ở toạ độ đã trôi
+// sau scroll → SAI element. Thuần JS trên đúng element khớp: chỉ 1 click, không lệ thuộc toạ độ.
+// field base64 (mang được tiếng Nhật/ký tự đặc biệt gọn 1 dòng). App foreground; timeout 4.5s.
 int touch_safari_click(const char *field, char *reply, size_t rlen) {
     if (!field) field = "";
     size_t fl = 0;
     char *bf = b64_encode((const unsigned char *)field, strlen(field), &fl);
     if (!bf) { snprintf(reply, rlen, "oom base64"); return 1; }
-    size_t vlen = 9 + fl + 2;                          // "WEBCOORD " + bf + "\n"
+    size_t vlen = 9 + fl + 2;                          // "WEBCLICK " + bf + "\n"
     char *verb = malloc(vlen);
     if (!verb) { free(bf); snprintf(reply, rlen, "oom verb"); return 1; }
-    snprintf(verb, vlen, "WEBCOORD %s\n", bf);
+    snprintf(verb, vlen, "WEBCLICK %s\n", bf);
     free(bf);
-    log_msg("safari.click: field=%.40s → WEBCOORD", field);
-
-    char coord_reply[256] = {0};
-    int r = send_verb_core_to(verb, coord_reply, sizeof(coord_reply), 1, 0, 4500);
+    log_msg("safari.click: field=%.40s → WEBCLICK (thuần JS)", field);
+    int r = send_verb_core_to(verb, reply, rlen, 1, 0, 4500);
     free(verb);
-
-    if (r != 0 || strncmp(coord_reply, "OK webcoord ", 12) != 0) {
-        snprintf(reply, rlen, "%s", coord_reply[0] ? coord_reply : "ERR webcoord timeout");
-        return 1;
-    }
-
-    // Parse "OK webcoord x,y"
-    float x = 0, y = 0;
-    if (sscanf(coord_reply + 12, "%f,%f", &x, &y) != 2) {
-        snprintf(reply, rlen, "ERR parse coords: %s", coord_reply);
-        return 1;
-    }
-
-    log_msg("safari.click: coord %.0f,%.0f → IATap (tweak)", x, y);
-
-    // Dùng touch_tap (route qua tweak IATap) thay vì sthid_tap
-    // IATap có xử lý web đặc biệt (hook WKWebView, JS click fallback)
-    char tap_err[128] = {0};
-    int tap_rc = touch_tap((int)x, (int)y, tap_err, sizeof(tap_err));
-    if (tap_rc != 0) {
-        snprintf(reply, rlen, "ERR tap: %s", tap_err[0] ? tap_err : "unknown");
-        return 1;
-    }
-    snprintf(reply, rlen, "OK webclick %.0f,%.0f (IATap)", x, y);
-    return 0;
+    return r;
 }
 
 // safari.checkbox (ẨN): "WEBCHECK <b64field>" — tweak lo TRỌN gói (tìm input checkbox/radio thật,
@@ -623,6 +601,25 @@ int touch_safari_checkbox(const char *field, char *reply, size_t rlen) {
     free(bf);
     log_msg("safari.checkbox: field=%.40s → WEBCHECK (app foreground)", field);
     int r = send_verb_core_to(verb, reply, rlen, 1, 0, 12000);
+    free(verb);
+    return r;
+}
+
+// safari.eval (ẨN): "WEBEVAL <b64js>" — chạy JS trong WKWebView app foreground; tweak GHI kết quả ra
+// file rồi trả "OK webeval <path>" (lua đọc file → không dính giới hạn 1KB reply). App foreground;
+// timeout 9s (JS eval trần 8s bên tweak). js base64 (mang tiếng Nhật/dấu nháy an toàn gọn 1 dòng).
+int touch_safari_eval(const char *js, char *reply, size_t rlen) {
+    if (!js) js = "";
+    size_t jl = 0;
+    char *bj = b64_encode((const unsigned char *)js, strlen(js), &jl);
+    if (!bj) { snprintf(reply, rlen, "oom base64"); return 1; }
+    size_t vlen = 8 + jl + 2;                          // "WEBEVAL " + bj + "\n"
+    char *verb = malloc(vlen);
+    if (!verb) { free(bj); snprintf(reply, rlen, "oom verb"); return 1; }
+    snprintf(verb, vlen, "WEBEVAL %s\n", bj);
+    free(bj);
+    log_msg("safari.eval: %zu byte JS → WEBEVAL", strlen(js));
+    int r = send_verb_core_to(verb, reply, rlen, 1, 0, 9000);
     free(verb);
     return r;
 }

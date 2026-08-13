@@ -2406,6 +2406,51 @@ static NSString *IAWebReadyState(void) {
     return result;
 }
 
+// safari.eval (ẨN): chạy JS TUỲ Ý trong WKWebView app foreground, GHI kết quả ra FILE (kết quả có thể
+// lớn: outerHTML/JSON — tránh giới hạn 1KB của socket reply). JS người dùng phải `return` giá trị;
+// object/mảng tự JSON.stringify. Trả "OK webeval <path>" (daemon đọc file) / "ERR ...". b64js = JS base64.
+static NSString *IAWebEval(NSString *b64js) {
+    if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
+        return @"ERR webeval: cần app foreground (không phải màn hình chính)";
+    if (!b64js) b64js = @"";
+    NSData *d = [[NSData alloc] initWithBase64EncodedString:b64js options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    NSString *js = d ? [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding] : nil;
+    if (!js.length) return @"ERR webeval: JS rỗng/giải mã base64 lỗi";
+
+    __block NSString *out = nil, *err = nil;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        @try {
+            UIWindow *win = IAActiveWindow();
+            UIView *wv = win ? IAFindWebView(win) : nil;
+            if (!wv && win.windowScene)
+                for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
+            SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
+            if (!wv || ![wv respondsToSelector:ejs]) { err = @"no-webview"; dispatch_semaphore_signal(sem); return; }
+            // Bọc: chạy JS người dùng trong 1 hàm (cho phép nhiều câu lệnh + return) → LUÔN trả string.
+            NSString *wrapped = [NSString stringWithFormat:
+                @"(function(){try{var r=(function(){%@\n})();"
+                "if(r===undefined||r===null)return '';"
+                "return (typeof r==='string')?r:JSON.stringify(r);}"
+                "catch(e){return '__ERR__'+((e&&e.message)?e.message:String(e));}})()", js];
+            void (^cb)(id, id) = ^(id res, id e2) {
+                if (e2) err = [e2 description];
+                else out = [res isKindOfClass:[NSString class]] ? res : [NSString stringWithFormat:@"%@", res];
+                dispatch_semaphore_signal(sem);
+            };
+            ((void (*)(id, SEL, id, id))objc_msgSend)(wv, ejs, wrapped, cb);
+        } @catch (NSException *e) { err = e.reason ?: @"?"; dispatch_semaphore_signal(sem); }
+    });
+    if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC))) != 0)
+        return @"ERR webeval: timeout";
+    if (err) return [@"ERR webeval " stringByAppendingString:err];
+    if ([out hasPrefix:@"__ERR__"]) return [@"ERR webeval " stringByAppendingString:[out substringFromIndex:7]];
+    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"iaeval.txt"];
+    if ([(out ?: @"") writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:nil])
+        return [@"OK webeval " stringByAppendingString:path];
+    return @"ERR webeval: write-fail";
+}
+
 // ================= SPIKE VideoToolbox: CARenderServer→IOSurface→H.264 =================
 // Kiểm chứng pipeline video độ trễ thấp cho IOScontrol: chụp CARenderServer vào IOSurface →
 // bọc CVPixelBuffer → VTCompressionSession (H.264 realtime) → ghi Annex B ra /var/tmp/iavt.h264.
@@ -2786,14 +2831,14 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
     // OCRIMG KHÔNG gate: ảnh do SpringBoard chụp được truyền vào (tự chứa) → app foreground/nền
     // nào chạy Vision cũng cho kết quả như nhau; daemon ưu tiên app mới nhất (foreground). Gate
     // sẽ khiến app foreground SKIP nếu applicationState chưa Active kịp → OCRIMG rơi xuống SpringBoard.
-    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBCHECK", @"WEBSTATE"]]; });
+    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBCHECK", @"WEBSTATE", @"WEBEVAL"]]; });
     BOOL isSB = [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
     if (!isSB && [interact containsObject:verb] && ![self isForeground])
         return @"SKIP not-foreground";
     // Web verb (WKWebView) chỉ app foreground xử lý được. SpringBoard KHÔNG có WKWebView → SKIP để
     // daemon KHÔNG che câu trả lời thật của Safari (vd "không thấy element") bằng "cần app foreground".
     static NSSet *webVerbs; static dispatch_once_t wo;
-    dispatch_once(&wo, ^{ webVerbs = [NSSet setWithArray:@[@"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBCHECK", @"WEBSTATE"]]; });
+    dispatch_once(&wo, ^{ webVerbs = [NSSet setWithArray:@[@"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBCHECK", @"WEBSTATE", @"WEBEVAL"]]; });
     if (isSB && [webVerbs containsObject:verb])
         return @"SKIP web-verb (SpringBoard không có WKWebView)";
 
@@ -2826,6 +2871,8 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
             return IAWebCheck(p[1]);
         if ([verb isEqualToString:@"WEBSTATE"])                  // safari.load: "WEBSTATE" → document.readyState
             return IAWebReadyState();
+        if ([verb isEqualToString:@"WEBEVAL"] && p.count >= 2)   // safari.eval/dom: "WEBEVAL <b64js>"
+            return IAWebEval(p[1]);
         if ([verb isEqualToString:@"FX"] && p.count >= 2) {
             gFxEnabled = [p[1] intValue] != 0;
             return gFxEnabled ? @"OK fx on" : @"OK fx off";

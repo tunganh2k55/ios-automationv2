@@ -716,6 +716,56 @@ static int l_safariLoad(lua_State *L) {
     return 2;
 }
 
+// safari.eval(js) → chuỗi kết quả, hoặc nil+diag. Chạy JS TUỲ Ý trong WKWebView app foreground —
+// DÙNG ĐỂ SOI DOM (outerHTML, querySelectorAll…) và viết selector chuẩn. `js` PHẢI `return` giá trị;
+// object/mảng tự JSON.stringify. Kết quả đọc từ FILE nên KHÔNG bị giới hạn 1KB. Hàm ẨN.
+//   VD: local html = safari.eval('return document.querySelector("#applyBtn").outerHTML')
+static int l_safariEval(lua_State *L) {
+    if (g_cancel) return luaL_error(L, "đã dừng");
+    const char *js = luaL_checkstring(L, 1);
+    char reply[800] = {0};
+    int rc = touch_safari_eval(js, reply, sizeof(reply));
+    if (g_cancel) return luaL_error(L, "đã dừng");
+    if (rc != 0 || strncmp(reply, "OK", 2) != 0) {
+        lua_pushnil(L);
+        lua_pushstring(L, reply[0] ? reply : "safari.eval lỗi");
+        return 2;
+    }
+    return push_result_file(L, reply, "webeval ");
+}
+
+// safari.dom(selector[, max=20]) → chuỗi JSON {count, items:[{i,tag,id,cls,rect:[x,y,w,h],html}]} của
+// các element khớp `selector` (outerHTML cắt 2000 ký tự), hoặc nil+diag. Tiện ích soi DOM nhanh.
+// LƯU Ý: selector nhúng trong nháy ĐƠN JS (CSS thường dùng nháy kép cho [attr="…"] nên OK); TRÁNH
+// selector chứa dấu nháy đơn — trường hợp đó dùng safari.eval tự viết JS. Hàm ẨN.
+static int l_safariDom(lua_State *L) {
+    if (g_cancel) return luaL_error(L, "đã dừng");
+    const char *sel = luaL_checkstring(L, 1);
+    int maxn = (int)luaL_optinteger(L, 2, 20);
+    if (maxn < 1) maxn = 1;
+    if (maxn > 200) maxn = 200;
+    char *js = malloc(strlen(sel) + 900);
+    if (!js) return luaL_error(L, "oom");
+    sprintf(js,
+        "var L=document.querySelectorAll('%s'),o=[],n=Math.min(L.length,%d);"
+        "for(var i=0;i<n;i++){var e=L[i],r=e.getBoundingClientRect();"
+        "o.push({i:i,tag:e.tagName,id:e.id||'',cls:(e.className&&e.className.baseVal!==undefined?e.className.baseVal:e.className)||'',"
+        "rect:[Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)],"
+        "html:(e.outerHTML||'').slice(0,2000)});}"
+        "return JSON.stringify({count:L.length,items:o});",
+        sel, maxn);
+    char reply[800] = {0};
+    int rc = touch_safari_eval(js, reply, sizeof(reply));
+    free(js);
+    if (g_cancel) return luaL_error(L, "đã dừng");
+    if (rc != 0 || strncmp(reply, "OK", 2) != 0) {
+        lua_pushnil(L);
+        lua_pushstring(L, reply[0] ? reply : "safari.dom lỗi");
+        return 2;
+    }
+    return push_result_file(L, reply, "webeval ");
+}
+
 // getSN() → serial number thiết bị (chuỗi) hoặc "" nếu không lấy được.
 static int l_getSN(lua_State *L) {
     char sn[64] = {0};
@@ -861,7 +911,7 @@ static void register_funcs(lua_State *L) {
     lua_register(L, "clipText", l_clipText);
     // Bảng ẨN `safari.*` (không đưa vào gợi ý syntax) — safari.fill(field, value) điền ô web.
     {
-        static const luaL_Reg safariFns[] = { {"fill", l_safariFill}, {"type", l_safariType}, {"clear", l_safariClear}, {"swipe", l_safariSwipe}, {"click", l_safariClick}, {"checkbox", l_safariCheckbox}, {"load", l_safariLoad}, {NULL, NULL} };
+        static const luaL_Reg safariFns[] = { {"fill", l_safariFill}, {"type", l_safariType}, {"clear", l_safariClear}, {"swipe", l_safariSwipe}, {"click", l_safariClick}, {"checkbox", l_safariCheckbox}, {"load", l_safariLoad}, {"eval", l_safariEval}, {"dom", l_safariDom}, {NULL, NULL} };
         luaL_newlib(L, safariFns);
         lua_setglobal(L, "safari");
     }
