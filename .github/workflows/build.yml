@@ -158,6 +158,9 @@ jobs:
           mkdir -p web-license/test-repo/debs
           cp out_merged/repo/debs/*.deb web-license/test-repo/debs/
           cp out_merged/repo/Packages web-license/test-repo/
+          # BẮT BUỘC copy Packages.gz — make_repo sinh .gz và Release hash theo .gz. Bỏ sót .gz
+          # → gz cũ lệch hash so với Release → Sileo báo "invalid". (bz2/xz make_repo KHÔNG sinh.)
+          cp out_merged/repo/Packages.gz web-license/test-repo/
           cp out_merged/repo/Packages.bz2 web-license/test-repo/ 2>/dev/null || true
           cp out_merged/repo/Packages.xz web-license/test-repo/ 2>/dev/null || true
           cp out_merged/repo/Release web-license/test-repo/

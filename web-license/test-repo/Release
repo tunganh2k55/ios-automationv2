@@ -8,7 +8,7 @@ Components: main
 Description: iOSAuto — iPhone automation (iOS 15-16 rootless)
 MD5Sum:
  bf2a9a0114788d88f5620b9e700fce94 749 Packages
- 5e3ee180dde064a9a77face153b1fa63 443 Packages.gz
+ 337e4150881020bfd7afadc7e16ea636 443 Packages.gz
 SHA256:
  b04ef24c01f8a555d591637de5526f6f6411dde7a95e001baee303efea3a7002 749 Packages
- 025084799e8c64d0dfebb851de63366be3055bf03113b7765244eac13c0db54a 443 Packages.gz
+ 3568e2fe76673cc3166be3bb05d3b236d6126bfa48e7386ef3c91eca05e77923 443 Packages.gz
