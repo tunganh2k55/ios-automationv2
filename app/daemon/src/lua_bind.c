@@ -236,6 +236,13 @@ static int push_result_file(lua_State *L, const char *reply, const char *marker)
     free(buf);
     return 1;
 }
+// Kết quả safari.eval: "OK webevalINLINE <text>" (trả thẳng — khi tweak không ghi được file, vd Safari
+// sandbox) HOẶC "OK webeval <path>" (đọc file — kết quả lớn). Trả 1 (chuỗi) hoặc nil+lỗi.
+static int push_eval_result(lua_State *L, const char *reply) {
+    const char *inl = strstr(reply, "webevalINLINE ");
+    if (inl) { lua_pushstring(L, inl + strlen("webevalINLINE ")); return 1; }
+    return push_result_file(L, reply, "webeval ");
+}
 // dump() → chuỗi XML cây UIView của app foreground (hoặc nil, lỗi).
 static int l_dump(lua_State *L) {
     char reply[800] = {0};
@@ -731,7 +738,7 @@ static int l_safariEval(lua_State *L) {
         lua_pushstring(L, reply[0] ? reply : "safari.eval lỗi");
         return 2;
     }
-    return push_result_file(L, reply, "webeval ");
+    return push_eval_result(L, reply);
 }
 
 // safari.dom(selector[, max=20]) → chuỗi JSON {count, items:[{i,tag,id,cls,rect:[x,y,w,h],html}]} của
@@ -763,7 +770,7 @@ static int l_safariDom(lua_State *L) {
         lua_pushstring(L, reply[0] ? reply : "safari.dom lỗi");
         return 2;
     }
-    return push_result_file(L, reply, "webeval ");
+    return push_eval_result(L, reply);
 }
 
 // getSN() → serial number thiết bị (chuỗi) hoặc "" nếu không lấy được.

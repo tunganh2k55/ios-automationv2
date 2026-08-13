@@ -2445,10 +2445,21 @@ static NSString *IAWebEval(NSString *b64js) {
         return @"ERR webeval: timeout";
     if (err) return [@"ERR webeval " stringByAppendingString:err];
     if ([out hasPrefix:@"__ERR__"]) return [@"ERR webeval " stringByAppendingString:[out substringFromIndex:7]];
-    NSString *path = [NSTemporaryDirectory() stringByAppendingPathComponent:@"iaeval.txt"];
-    if ([(out ?: @"") writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:nil])
+    out = out ?: @"";
+    // Ưu tiên GHI FILE ở /var/jb/tmp (tmp jailbreak — writable từ tweak trong mọi app, kể cả Safari;
+    // NSTemporaryDirectory() của Safari bị sandbox chặn → write-fail). Daemon (root) đọc lại file này.
+    NSString *path = @"/var/jb/tmp/iaeval.txt";
+    if ([out writeToFile:path atomically:NO encoding:NSUTF8StringEncoding error:nil])
         return [@"OK webeval " stringByAppendingString:path];
-    return @"ERR webeval: write-fail";
+    NSString *tmp2 = [NSTemporaryDirectory() stringByAppendingPathComponent:@"iaeval.txt"];   // dự phòng: tmp app
+    if (tmp2.length && [out writeToFile:tmp2 atomically:NO encoding:NSUTF8StringEncoding error:nil])
+        return [@"OK webeval " stringByAppendingString:tmp2];
+    // Không ghi được file ở đâu cả → TRẢ INLINE (kết quả nhỏ như toạ độ vẫn qua reply 1KB). Bỏ CR/LF
+    // để reply gọn 1 dòng; cắt 900 ký tự (kết quả lớn cần file — báo caller biết đã cắt).
+    NSString *inl = [[out stringByReplacingOccurrencesOfString:@"\r" withString:@" "]
+                          stringByReplacingOccurrencesOfString:@"\n" withString:@" "];
+    if (inl.length > 900) inl = [inl substringToIndex:900];
+    return [@"OK webevalINLINE " stringByAppendingString:inl];
 }
 
 // ================= SPIKE VideoToolbox: CARenderServer→IOSurface→H.264 =================
