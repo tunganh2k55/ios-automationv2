@@ -207,7 +207,8 @@ ipcMain.handle("config:push", async (evt, { text, devices }) => {
 const SCRIPTS = [
   // file: tên file trong ./scripts (blob .luax) · remoteFile: tên lưu trên máy · configFile: file config
   { id: "regpoke", name: "RegPoke", file: "reg-poke.luax", remoteFile: "reg-poke.luax", configFile: "config_reg_poke.txt", desc: "Đăng ký tài khoản Pokémon tự động" },
-  { id: "chyusen", name: "Chyusen", file: "chyusen.luax", remoteFile: "chyusen.luax", configFile: "config_reg_poke.txt", desc: "Rút thăm (抽選) Pokémon tự động - vòng lặp vô hạn" },
+  { id: "chyusen_honin", name: "Chyusen 本人 (1,3,5)", file: "chyusen_honin.luax", remoteFile: "chyusen_honin.luax", configFile: "config_reg_poke.txt", desc: "本人認証済み枠 - items 1,3,5" },
+  { id: "chyu_246", name: "Chyusen (2,4,6)", file: "chyu_246.luax", remoteFile: "chyu_246.luax", configFile: "config_reg_poke.txt", desc: "Chyusen poll song song - items 2,4,6" },
 ];
 function scriptsDir() { return path.join(__dirname, "scripts"); }
 function findScript(id) { return SCRIPTS.find((s) => s.id === id) || null; }

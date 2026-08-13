@@ -1,47 +1,34 @@
 -- ============================================================================
--- chyusen_honin.lua — Vòng lặp VÔ HẠN login + ứng tuyển chyusen (本人認証済み枠)
--- v1.0.0 (2026-08-13)
+-- chyu_v44_B.lua — Vòng lặp VÔ HẠN login + ứng tuyển chyusen
+-- v1.0.44-B (2026-08-13)
+--
+-- Thay đổi so với chyusen_v44.lua:
+--   - Phương án B: Poll song song sau login — fail nhanh nếu lỗi, chờ lâu cho authCode
+--   - Loop tối đa 30s (6 lần × 5s): check lỗi/reauth/authCode mỗi lần
+--   - Sai pass/reauth → xử lý ngay; authCode → chờ page load xong mới thấy
 --
 -- Flow mỗi lượt:
---   (1) Đổi IP 4G (nếu use4g=1) → (2) Claim 1 dòng → (3) Clear Safari →
---   (4) Login (email+password) → (5) Chờ passcode → (6) Poll code từ API →
---   (7) Nhập passcode + xác thực → (8) Mở trang apply → (9) Ứng tuyển LIST items
+--   (1) Check license pokemontool → (2) Đổi IP 4G (nếu use4g=1) → (3) Claim 1 dòng
+--   → (4) Clear Safari → (5) Login (email+password) → (6) Poll 3 trạng thái (30s)
+--   → (7) Poll code từ API → (8) Nhập passcode + xác thực → (9) Ứng tuyển LIST items
 --   → (10) Upload kết quả
---
--- Logic dừng:
---   - Chạy VÔ HẠN, không giới hạn số account
---   - Khi hết acc (HTTP 409): chờ 5s rồi thử lại, đếm emptyRetryCount
---   - Nếu có acc mới: RESET emptyRetryCount về 0 (tiếp tục vô hạn)
---   - Nếu thử 100 lần liên tiếp mà vẫn hết acc: DỪNG HẲN
---
--- Error handling ĐẦY ĐỦ cho mọi case:
---   - Lỗi đọc config / thiếu apikey
---   - Lỗi mạng (httpGet/httpPost timeout/fail)
---   - HTTP 409 (hết dòng), 400/404/502 (lỗi API)
---   - Content sai định dạng (không tách được email|password)
---   - Lỗi Safari: clear fail, mở trang fail, gõ fail, click fail
---   - Lỗi passcode: không thấy #authCode, poll code timeout, mail không tới
---   - Lỗi apply item: mỗi bước (detail, radio, checkbox, popup, applyBtn)
---   - Lỗi bất ngờ (pcall catch all)
---   - User dừng script (ấn Dừng)
 -- ============================================================================
 
 local BASE = "https://imapicloud.site"
 local CONFIG_PATH = "/var/jb/usr/local/iosauto/scripts/config_reg_poke.txt"
 
 -- ========== CẤU HÌNH ==========
-local CHYUSEN_TYPE = "pokemon"      -- loại chyusen (本人認証済み枠)
+local CHYUSEN_TYPE = "pokemon"
 local LOGIN_URL    = "https://www.pokemoncenter-online.com/lottery/login.html"
--- APPLY_URL không cần vì web tự chuyển sau login
+local APPLY_URL    = "https://www.pokemoncenter-online.com/lottery/apply.html"
+
+local APPLY_ITEMS = { 2, 4, 6 }
 
 -- Selectors
 local SEL_EMAIL    = "email"
 local SEL_PASSWORD = "password"
 local SEL_LOGINBTN = "a.loginBtn"
 
--- Popup xác nhận "応募してよろしいですか？": nút 応募する nằm GIỮA màn. Text nút này TRÙNG với nút
--- 応募する nền (khớp-text lấy nhầm nút nền) → dùng tap TOẠ ĐỘ. Giá trị cho màn 375x667 (iPhone 7),
--- nút ở tâm ngang (~187) và ~44% chiều cao (~293). Đổi nếu chạy máy khác kích thước.
 local APPLY_MODAL_X = 187
 local APPLY_MODAL_Y = 293
 
@@ -53,15 +40,18 @@ local C4G_READY_TRY   = 4
 local C4G_READY_WAIT  = 1.5
 
 -- Retry settings
-local MAX_EMPTY_RETRY = 100               -- khi hết acc, thử lại tối đa 100 lần rồi dừng
-local EMPTY_RETRY_GAP = 5                 -- chờ 5s giữa mỗi lần retry khi hết acc
-local MAX_ERROR_RETRY = 10                -- retry lỗi khác (network, server) tối đa 5 lần liên tiếp
+local MAX_EMPTY_RETRY = 100
+local EMPTY_RETRY_GAP = 10
+local MAX_ERROR_RETRY = 10
 
--- Poll code xác thực (mail): chờ TỐI ĐA ~3 phút. Chia CODE_POLL_TRIES lần, mỗi lần nghỉ CODE_POLL_GAP
--- giây (36 × 5s ≈ 180s). Có CHỐT thời gian thực (os.time) → KHÔNG vượt quá 3 phút kể cả khi mạng chậm.
-local CODE_POLL_TRIES   = 36               -- số lần poll tối đa (đủ phủ 3 phút với gap 5s)
-local CODE_POLL_GAP     = 5                -- nghỉ giữa 2 lần poll (giây)
-local CODE_POLL_MAX_SEC = 180              -- trần thời gian chờ tổng (giây) = 3 phút
+-- Poll code xác thực
+local CODE_POLL_TRIES   = 36
+local CODE_POLL_GAP     = 5
+local CODE_POLL_MAX_SEC = 180
+
+-- Login state poll settings (Phương án B)
+local LOGIN_STATE_TIMEOUT = 30    -- tổng thời gian chờ (giây)
+local LOGIN_STATE_GAP     = 5     -- nghỉ giữa mỗi lần check (giây)
 
 -- ========== HELPERS ==========
 local function trim(s) return (tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", "")) end
@@ -155,8 +145,6 @@ local function holdAirplane(secs)
     return true
 end
 
--- resetNetwork: TẮT/BẬT airplane để reset mạng — chờ 10s cho mạng ổn định
--- Dùng sau khi lấy được acc mới để đổi IP
 local function resetNetwork()
     if not readUse4g() then return end
     if type(setAirplane) ~= "function" then
@@ -170,13 +158,12 @@ local function resetNetwork()
         return
     end
     notify("Reset mạng: đã bật lại sóng, chờ 5s...", 2)
-    sleep(5)  -- chờ mạng ổn định trước khi mở link
+    sleep(5)
     notify("Reset mạng: OK", 2)
 end
 
 -- ========== API FUNCTIONS ==========
 local function claimChyusen(key, ctype)
-    -- Kiểm tra key
     if not key or key == "" then
         return nil, "MISSING_KEY", "thiếu apikey"
     end
@@ -186,12 +173,10 @@ local function claimChyusen(key, ctype)
 
     local body, st = httpGet(url, { ["x-api-key"] = key })
 
-    -- Case 1: Lỗi mạng (body = nil)
     if not body then
         return nil, "NETWORK_ERROR", "lỗi mạng: " .. tostring(st)
     end
 
-    -- Case 2: HTTP 200 OK
     if st == 200 then
         local d = jsonDecode(body)
         if not d then
@@ -204,55 +189,26 @@ local function claimChyusen(key, ctype)
         return nil, "INVALID_RESPONSE", "HTTP 200 nhưng thiếu id: " .. tostring(body):sub(1, 100)
     end
 
-    -- Case 3: HTTP 409 = hết dòng
-    if st == 409 then
-        return nil, "EMPTY", "hết dòng chyusen chưa lấy"
-    end
+    if st == 409 then return nil, "EMPTY", "hết dòng chyusen chưa lấy" end
+    if st == 400 then return nil, "BAD_REQUEST", "HTTP 400: " .. tostring(body):sub(1, 100) end
+    if st == 401 or st == 403 then return nil, "UNAUTHORIZED", "HTTP " .. st .. ": apikey sai hoặc hết hạn" end
+    if st == 404 then return nil, "NOT_FOUND", "HTTP 404: API endpoint không tồn tại" end
+    if st == 429 then return nil, "RATE_LIMIT", "HTTP 429: quá nhiều request, thử lại sau" end
+    if st >= 500 then return nil, "SERVER_ERROR", "HTTP " .. st .. ": server lỗi" end
 
-    -- Case 4: HTTP 400 = request sai
-    if st == 400 then
-        return nil, "BAD_REQUEST", "HTTP 400: " .. tostring(body):sub(1, 100)
-    end
-
-    -- Case 5: HTTP 401/403 = key sai hoặc hết hạn
-    if st == 401 or st == 403 then
-        return nil, "UNAUTHORIZED", "HTTP " .. st .. ": apikey sai hoặc hết hạn"
-    end
-
-    -- Case 6: HTTP 404 = endpoint không tồn tại
-    if st == 404 then
-        return nil, "NOT_FOUND", "HTTP 404: API endpoint không tồn tại"
-    end
-
-    -- Case 7: HTTP 429 = rate limit
-    if st == 429 then
-        return nil, "RATE_LIMIT", "HTTP 429: quá nhiều request, thử lại sau"
-    end
-
-    -- Case 8: HTTP 500/502/503/504 = server lỗi
-    if st >= 500 then
-        return nil, "SERVER_ERROR", "HTTP " .. st .. ": server lỗi"
-    end
-
-    -- Case 9: HTTP khác
     return nil, "HTTP_ERROR", string.format("HTTP %s: %s", tostring(st), tostring(body):sub(1, 100))
 end
 
 local function uploadResult(key, id, result, status)
-    -- Case 1: Thiếu id
     if not id or id == "" then
         notify("uploadResult: thiếu id — bỏ qua", 2)
         return nil, "MISSING_ID"
     end
 
-    -- Case 2: Thiếu result
     if not result then result = "unknown" end
-
     status = (status == "failed") and "failed" or "success"
 
     local payload = jsonEncode({ id = id, result = result, status = status })
-
-    -- Case 3: jsonEncode fail
     if not payload then
         notify("uploadResult: jsonEncode lỗi", 2)
         return nil, "JSON_ENCODE_ERROR"
@@ -261,55 +217,46 @@ local function uploadResult(key, id, result, status)
     local resp, st = httpPost(BASE .. "/api/v1/chyusen/result", payload,
         "application/json", { ["x-api-key"] = key })
 
-    -- Case 4: Lỗi mạng
     if not resp then
         notify("uploadResult: lỗi mạng " .. tostring(st), 3)
         return nil, "NETWORK_ERROR"
     end
 
-    -- Case 5: Parse response
     local d = jsonDecode(resp)
     if not d then
         notify("uploadResult: không parse được response: " .. tostring(resp):sub(1, 100), 3)
         return nil, "INVALID_JSON"
     end
 
-    -- Case 6: Success
     if (st == 200 or st == 201) and d.ok then
         notify("Upload [" .. status .. "] OK cho id=" .. tostring(id), 3)
         return d.record or d, "OK"
     end
 
-    -- Case 7: HTTP error
     notify(string.format("uploadResult HTTP %s: %s", tostring(st), tostring(resp):sub(1, 100)), 3)
     return nil, "HTTP_" .. tostring(st)
 end
 
 local function getChyusenCode(key, id, tries, gap, maxSec)
-    -- Case 1: Thiếu id
     if not id or id == "" then
         return nil, "MISSING_ID", "thiếu id"
     end
 
     tries = math.max(1, tonumber(tries) or 20)
     gap = tonumber(gap) or 5
-    -- Trần thời gian chờ TỔNG (giây). Poll dừng khi ĐỦ maxSec dù chưa hết `tries` — đảm bảo "tối đa
-    -- 3 phút" kể cả khi từng lần httpGet chậm. Mặc định = tries*gap (giữ hành vi cũ nếu không truyền).
     maxSec = tonumber(maxSec) or (tries * gap)
-    local startT = (os and os.time) and os.time() or nil    -- os.time có thể bị sandbox → bỏ chốt, chỉ theo tries
+    local startT = (os and os.time) and os.time() or nil
     local url = BASE .. "/api/v1/chyusen/code?id=" .. tostring(id)
     local lastErr = "unknown"
     local lastCode = "UNKNOWN"
 
     for attempt = 1, tries do
-        -- Chốt thời gian thực: đã chờ đủ maxSec → dừng sớm (không đợi cho hết `tries`).
         if startT and (os.time() - startT) >= maxSec then
             notify(string.format("getCode: đã chờ ~%ds (trần %ds) → dừng poll", os.time() - startT, maxSec), 2)
             break
         end
         local body, st = httpGet(url, { ["x-api-key"] = key })
 
-        -- Case 2: Lỗi mạng
         if not body then
             lastErr = "lỗi mạng: " .. tostring(st)
             lastCode = "NETWORK_ERROR"
@@ -318,7 +265,6 @@ local function getChyusenCode(key, id, tries, gap, maxSec)
             goto continue
         end
 
-        -- Case 3: HTTP 200
         if st == 200 then
             local d = jsonDecode(body)
             if not d then
@@ -329,13 +275,11 @@ local function getChyusenCode(key, id, tries, gap, maxSec)
                 goto continue
             end
 
-            -- Case 3a: Có code
             if d.found and d.code and d.code ~= "" then
                 notify(string.format("Code OK (lần %d): %s", attempt, tostring(d.code)), 3)
                 return d.code, "OK", nil
             end
 
-            -- Case 3b: Mail chưa tới
             lastErr = "mail chưa tới (found=" .. tostring(d.found) .. ")"
             lastCode = "MAIL_NOT_ARRIVED"
             notify(string.format("getCode %d/%d: %s", attempt, tries, lastErr), 2)
@@ -343,22 +287,10 @@ local function getChyusenCode(key, id, tries, gap, maxSec)
             goto continue
         end
 
-        -- Case 4: HTTP 400 = thiếu email_forward/app_password
-        if st == 400 then
-            return nil, "BAD_CONFIG", "HTTP 400: thiếu email_forward/app_password trong dòng chyusen"
-        end
+        if st == 400 then return nil, "BAD_CONFIG", "HTTP 400: thiếu email_forward/app_password trong dòng chyusen" end
+        if st == 404 then return nil, "NOT_FOUND", "HTTP 404: không tìm thấy dòng chyusen id=" .. tostring(id) end
+        if st == 401 or st == 403 then return nil, "UNAUTHORIZED", "HTTP " .. st .. ": apikey sai" end
 
-        -- Case 5: HTTP 404 = không tìm thấy dòng
-        if st == 404 then
-            return nil, "NOT_FOUND", "HTTP 404: không tìm thấy dòng chyusen id=" .. tostring(id)
-        end
-
-        -- Case 6: HTTP 401/403 = key sai
-        if st == 401 or st == 403 then
-            return nil, "UNAUTHORIZED", "HTTP " .. st .. ": apikey sai"
-        end
-
-        -- Case 7: HTTP 502 = lỗi kết nối mail server
         if st == 502 then
             lastErr = "HTTP 502: lỗi kết nối mail server (sai app password?)"
             lastCode = "MAIL_SERVER_ERROR"
@@ -367,7 +299,6 @@ local function getChyusenCode(key, id, tries, gap, maxSec)
             goto continue
         end
 
-        -- Case 8: HTTP 503/504 = server tạm không khả dụng
         if st == 503 or st == 504 then
             lastErr = "HTTP " .. st .. ": server tạm không khả dụng"
             lastCode = "SERVER_UNAVAILABLE"
@@ -376,7 +307,6 @@ local function getChyusenCode(key, id, tries, gap, maxSec)
             goto continue
         end
 
-        -- Case 9: HTTP khác
         lastErr = "HTTP " .. tostring(st) .. ": " .. tostring(body):sub(1, 100)
         lastCode = "HTTP_" .. tostring(st)
         notify(string.format("getCode %d/%d: %s", attempt, tries, lastErr), 2)
@@ -415,7 +345,6 @@ local function openAndWait(url, timeout, retries)
     local lastDiag = "unknown"
 
     for attempt = 1, retries do
-        -- Case 1: openUrl fail
         local okOpen = pcall(function() openUrl(url) end)
         if not okOpen then
             lastDiag = "openUrl exception"
@@ -429,7 +358,6 @@ local function openAndWait(url, timeout, retries)
 
         sleep(2)
 
-        -- Case 2: waitLoad
         local ok, diag = waitLoad(timeout)
         if ok then return true, "OK" end
 
@@ -455,19 +383,16 @@ local function waitFor(fn, timeout, gap)
     for i = 1, tries do
         local okCall, ok, diag = pcall(fn)
 
-        -- Case 1: fn exception
         if not okCall then
             lastDiag = "exception: " .. tostring(ok)
             if i < tries then sleep(gap) end
             goto continue
         end
 
-        -- Case 2: Success
         if ok then return true, diag, i end
 
         lastDiag = tostring(diag or "unknown")
 
-        -- Case 3: Safari không foreground
         if lastDiag:find("foreground") then
             ensureSafari()
         elseif i < tries then
@@ -481,7 +406,6 @@ local function waitFor(fn, timeout, gap)
 end
 
 local function typeWait(field, value, timeout)
-    -- Case 1: safari.type không tồn tại
     if not safari then
         return false, "safari object không tồn tại"
     end
@@ -489,7 +413,6 @@ local function typeWait(field, value, timeout)
         return false, "safari.type chưa có (cần daemon mới có WEBTYPE)"
     end
 
-    -- Case 2: field/value rỗng
     if not field or field == "" then
         return false, "field rỗng"
     end
@@ -501,7 +424,6 @@ local function typeWait(field, value, timeout)
 end
 
 local function clickWait(field, timeout)
-    -- Case 1: safari.click không tồn tại
     if not safari then
         return false, "safari object không tồn tại"
     end
@@ -509,7 +431,6 @@ local function clickWait(field, timeout)
         return false, "safari.click chưa có"
     end
 
-    -- Case 2: field rỗng
     if not field or field == "" then
         return false, "selector rỗng"
     end
@@ -517,10 +438,6 @@ local function clickWait(field, timeout)
     return waitFor(function() return safari.click(field) end, timeout, 0.5)
 end
 
--- checkboxWait: tick checkbox/radio bằng safari.checkbox — tìm ĐÚNG <input>, tap vào label nếu input
--- bị ẩn/quá nhỏ (style đè lên), VERIFY .checked + .click() JS bù nếu HID tap trượt. Chuẩn hơn nhiều so
--- với safari.click (chỉ tap toạ độ → dễ trượt/không toggle với ô ẩn). Daemon cũ chưa có safari.checkbox
--- → fallback về safari.click để vẫn chạy được.
 local function checkboxWait(field, timeout)
     if not safari then
         return false, "safari object không tồn tại"
@@ -531,7 +448,6 @@ local function checkboxWait(field, timeout)
     if type(safari.checkbox) == "function" then
         return waitFor(function() return safari.checkbox(field) end, timeout, 0.5)
     end
-    -- Fallback daemon cũ (chưa có safari.checkbox)
     if type(safari.click) == "function" then
         return waitFor(function() return safari.click(field) end, timeout, 0.5)
     end
@@ -539,7 +455,6 @@ local function checkboxWait(field, timeout)
 end
 
 local function clearSafari()
-    -- Case 1: Thử safari.clear() trước (daemon mới)
     if safari and type(safari.clear) == "function" then
         local okCall, ok, count, diag = pcall(safari.clear)
         if okCall and ok then
@@ -549,7 +464,6 @@ local function clearSafari()
         notify("safari.clear lỗi: " .. tostring(count or diag) .. " — thử clearAppData", 2)
     end
 
-    -- Case 2: Fallback clearAppData
     if type(clearAppData) == "function" then
         local okCall, ok, count = pcall(clearAppData, "com.apple.mobilesafari")
         if okCall and ok then
@@ -559,19 +473,10 @@ local function clearSafari()
         return false, "clearAppData lỗi: " .. tostring(ok or count)
     end
 
-    -- Case 3: Không có hàm clear
     return false, "không có hàm clear Safari (daemon quá cũ)"
 end
 
 -- ========== APPLY (dùng safari.eval — daemon >= 1.0.43) ==========
--- Danh sách item cần ứng tuyển trong ul.comOrderList (1-based), CHẠY LẦN LƯỢT trong CÙNG 1 account:
---   1 item      : local APPLY_ITEMS = { 1 }
---   nhiều item  : local APPLY_ITEMS = { 1, 5 }        -- ứng tuyển item 1 rồi item 5
---                 local APPLY_ITEMS = { 1, 2, 3, 5 }  -- 4 item
--- Mỗi item = 1 đơn抽選 riêng (web cho おひとり様1回/商品). Item nào lỗi thì bỏ qua, tiếp item kế.
-local APPLY_ITEMS = { 1, 3, 5 }
-
--- evalStr: chạy JS qua safari.eval → (chuỗi | nil, diag). JS phải `return` giá trị.
 local function evalStr(js)
     if not (safari and type(safari.eval) == "function") then
         return nil, "safari.eval chưa có (cần daemon >= 1.0.43)"
@@ -582,8 +487,6 @@ local function evalStr(js)
     return a, nil
 end
 
--- tapByEval: JS trả "x,y" (tâm element cần bấm) → HID tap đúng toạ độ đó. Lặp tới khi có toạ độ hợp
--- lệ (khác 0,0) hoặc hết timeout. Dùng cho nút CHỈ nhận touch thật (popup xác nhận bỏ qua JS click).
 local function tapByEval(js, label, timeout)
     timeout = tonumber(timeout) or 8
     local last = "?"
@@ -605,9 +508,6 @@ local function tapByEval(js, label, timeout)
     return false, (label or "") .. " không lấy được toạ độ: " .. last
 end
 
--- JS lấy TOẠ ĐỘ tâm nút 応募する của FORM (đang HIỂN THỊ, KHÔNG thuộc popup). Dùng HID tap (touch
--- thật chạy trên MỌI nút, không phụ thuộc nút có nhận JS click hay không, và né được vụ #applyBtn
--- global luôn = item 1). Trả "x,y" | "0,0" (chưa thấy).
 local JS_FORM_APPLY_COORD = [[
 var as=document.querySelectorAll('a,button');
 for(var i=0;i<as.length;i++){var a=as[i];
@@ -618,8 +518,6 @@ return Math.round(r.left+r.width/2)+','+Math.round(r.top+r.height/2);}
 return '0,0';
 ]]
 
--- JS lấy TOẠ ĐỘ tâm nút 応募する TRONG POPUP xác nhận (Magnific #pop01 / .mfp-content). Nút này BỎ QUA
--- JS click (isTrusted) nên phải HID tap toạ độ này. Trả "x,y" | "0,0" (chưa thấy → tapByEval sẽ lặp).
 local JS_POPUP_APPLY_COORD = [[
 var as=document.querySelectorAll('.mfp-content a,.mfp-content button,#pop01 a,#pop01 button');
 for(var i=0;i<as.length;i++){var a=as[i];
@@ -629,19 +527,11 @@ return Math.round(r.left+r.width/2)+','+Math.round(r.top+r.height/2);}
 return '0,0';
 ]]
 
--- Flow ứng tuyển item N (本人認証済み枠) — VERIFY trên web 2026-08-13:
---   (1) 詳しく見る : mở accordion item N            → ul.comOrderList > li:nth-child(N) dt
---   (2) radio SP   : safari.checkbox drill vào <input radio> đầu tiên trong li
---   (3) 同意する   : tick checkbox "応募要項に同意する" (scope trong li, fallback theo label)
---   (4) 応募する   : HID tap nút form (eval tìm nút HIỂN THỊ ngoài popup + lấy toạ độ) → mở popup
---   (5) 応募する   : HID tap nút TRONG popup (eval lấy toạ độ; nút popup bỏ qua JS click)
--- LƯU Ý: web yêu cầu ĐÃ LOGIN; nếu chưa login, bước (5) nhảy về trang login (không ghi nhận).
 local function applyItem(n)
     local ITEM = string.format("ul.comOrderList > li:nth-child(%d)", n)
     notify(string.format("--- Ứng tuyển item %d ---", n), 2)
     local errors = {}
 
-    -- Step 1: mở chi tiết 詳しく見る (toggle là thẻ <dt> trong li)
     local ok1, diag1 = clickWait(ITEM .. " dt", 10)
     if not ok1 then
         table.insert(errors, "step1_detail: " .. tostring(diag1))
@@ -650,7 +540,6 @@ local function applyItem(n)
     end
     sleep(1)
 
-    -- Step 2: chọn RADIO sản phẩm (safari.checkbox tự tìm <input radio> ĐẦU TIÊN trong li)
     local ok2, diag2 = checkboxWait(ITEM, 10)
     if not ok2 then
         table.insert(errors, "step2_radio: " .. tostring(diag2))
@@ -659,7 +548,6 @@ local function applyItem(n)
     end
     sleep(0.5)
 
-    -- Step 3: tick checkbox đồng ý (scope trong li; fallback theo label nếu không match)
     local ok3, diag3 = checkboxWait(ITEM .. ' input[type="checkbox"]', 10)
     if not ok3 then ok3, diag3 = checkboxWait("応募要項に同意する", 6) end
     if not ok3 then
@@ -669,7 +557,6 @@ local function applyItem(n)
     end
     sleep(0.5)
 
-    -- Step 4: HID tap nút 応募する của FORM (eval lấy toạ độ) → mở popup xác nhận
     if not (safari and type(safari.eval) == "function") then
         table.insert(errors, "step4_apply: safari.eval chưa có → cần cập nhật daemon 1.0.43")
         notify("FAIL: cần daemon >= 1.0.43 (safari.eval)", 3)
@@ -682,12 +569,10 @@ local function applyItem(n)
         return false, errors, "APPLYBTN_CLICK_FAIL"
     end
     notify("Đã bấm 応募する (form): " .. tostring(diag4), 2)
-    sleep(1.5)   -- chờ popup xác nhận hiện
+    sleep(1.5)
 
-    -- Step 5: HID tap nút 応募する TRONG popup (eval lấy toạ độ; nút popup bỏ qua JS click)
     local ok5, diag5 = tapByEval(JS_POPUP_APPLY_COORD, "popup 応募する", 8)
     if not ok5 then
-        -- fallback: Magnific căn popup GIỮA màn → tap tâm cố định
         if type(tap) == "function" then
             tap(APPLY_MODAL_X, APPLY_MODAL_Y)
             notify(string.format("popup: fallback tap(%d,%d) [%s]", APPLY_MODAL_X, APPLY_MODAL_Y, tostring(diag5)), 2)
@@ -702,7 +587,6 @@ local function applyItem(n)
 
     sleep(5)
 
-    -- Step 6: chờ load trang kết quả
     local okLoad, diagLoad = waitLoad(30)
     if not okLoad then
         table.insert(errors, "step6_load: " .. tostring(diagLoad))
@@ -714,8 +598,6 @@ local function applyItem(n)
     return true, {}, "OK"
 end
 
--- dismissPopup: đóng popup còn sót giữa 2 item (bấm 閉じる). Best-effort qua safari.eval.
--- (Sau khi submit THÀNH CÔNG, popup tự đóng + hiện 受付完了 nên thường không cần; đây là lưới an toàn.)
 local function dismissPopup()
     if not (safari and type(safari.eval) == "function") then return end
     pcall(safari.eval, [[
@@ -727,12 +609,7 @@ return 'none';
 ]])
 end
 
--- Wrapper: ứng tuyển LẦN LƯỢT các item trong APPLY_ITEMS (cùng 1 account). processOne gọi hàm này.
--- Trả: ok(true nếu >=1 item thành công), errs(chi tiết lỗi từng item), code(summary GỌN):
---   tất cả OK   → "ok:1,3,5"
---   1 phần lỗi  → "ok:1,3-fail5"   (item 1,3 OK; item 5 lỗi)
---   tất cả lỗi  → "fail:1,3,5"
-local function applyHonin()
+local function applyAll()
     local total = #APPLY_ITEMS
     if total == 0 then return false, { "APPLY_ITEMS rỗng — chưa cấu hình item" }, "NO_ITEMS" end
     local okList, failList, allErrors = {}, {}, {}
@@ -746,11 +623,10 @@ local function applyHonin()
             for _, e in ipairs(errs or {}) do table.insert(allErrors, string.format("li%d:%s", n, tostring(e))) end
         end
         if idx < total then
-            dismissPopup()      -- dọn popup còn sót trước item kế
+            dismissPopup()
             sleep(1.5)
         end
     end
-    -- summary gọn: ok:<ds item OK>[-fail<ds item lỗi>]  |  fail:<ds> nếu không item nào OK
     local summary
     if #okList > 0 then
         summary = "ok:" .. table.concat(okList, ",")
@@ -759,7 +635,7 @@ local function applyHonin()
         summary = "fail:" .. table.concat(failList, ",")
     end
     if #okList == 0 then return false, allErrors, summary end
-    return true, allErrors, summary   -- >=1 item OK: coi là success, phần lỗi (nếu có) ghi kèm result
+    return true, allErrors, summary
 end
 
 -- ========== MAIN FLOW 1 ACCOUNT ==========
@@ -767,7 +643,7 @@ local function processOne(key, accountNum)
     local rec, code, errCode, errMsg
     local failReason = nil
 
-    -- Step 1: Clear Safari TRƯỚC (để không dính session cũ)
+    -- Step 1: Clear Safari
     notify("[#" .. accountNum .. "] Clear Safari...", 2)
     local okClear, clearDiag = clearSafari()
     if not okClear then
@@ -779,7 +655,6 @@ local function processOne(key, accountNum)
     rec, code, errMsg = claimChyusen(key, CHYUSEN_TYPE)
 
     if not rec then
-        -- Phân loại lỗi claim chi tiết
         if code == "EMPTY" then
             notify("[#" .. accountNum .. "] Hết dòng chyusen — dừng vòng lặp", 4)
             return "STOP_EMPTY", nil
@@ -814,13 +689,12 @@ local function processOne(key, accountNum)
     local id = rec.id
     notify(string.format("[#%d] Claim OK: id=%s", accountNum, tostring(id)), 3)
 
-    -- Step 3: Reset mạng (có acc mới → đổi IP nhanh, không check, không chờ)
+    -- Step 3: Reset mạng
     resetNetwork()
 
-    -- Step 4: Parse content (format: email|password|email_forward|app_password)
+    -- Step 4: Parse content
     local content = tostring(rec.content or "")
 
-    -- Case 3a: Content rỗng
     if content == "" then
         failReason = "content rỗng"
         notify("[#" .. accountNum .. "] " .. failReason, 3)
@@ -828,7 +702,6 @@ local function processOne(key, accountNum)
         return "CONTINUE", rec
     end
 
-    -- Case 3b: Tách 4 trường: email|password|email_forward|app_password
     local parts = {}
     for part in content:gmatch("[^|]+") do
         table.insert(parts, trim(part))
@@ -836,8 +709,6 @@ local function processOne(key, accountNum)
 
     local email = parts[1]
     local password = parts[2]
-    -- parts[3] = email_forward (API dùng để đọc mail)
-    -- parts[4] = app_password (API dùng để đọc mail)
 
     if not email or email == "" then
         failReason = "content sai định dạng (thiếu email): " .. content:sub(1, 50)
@@ -853,7 +724,6 @@ local function processOne(key, accountNum)
         return "CONTINUE", rec
     end
 
-    -- Case 3c: Email không hợp lệ (không có @)
     if not email:find("@") then
         failReason = "email không hợp lệ (thiếu @): " .. email:sub(1, 30)
         notify("[#" .. accountNum .. "] " .. failReason, 3)
@@ -895,30 +765,127 @@ local function processOne(key, accountNum)
     end
     notify("[#" .. accountNum .. "] Đã gõ password", 2)
 
-    -- Step 8: Bấm login
-    humanPause(0.6, 1.4)
-    local okLogin, loginDiag = clickWait(SEL_LOGINBTN, 10)
-    if not okLogin then
-        failReason = "bấm login lỗi: " .. tostring(loginDiag)
+    -- Step 8: Bấm login (có retry nếu bắt xác thực lại)
+    local MAX_LOGIN_RETRY = 2
+    local loginAttempt = 0
+    local passcodePassed = false
+
+    -- JS kiểm tra trạng thái sau login
+    local JS_CHECK_LOGIN_STATE = [[
+var authCode = document.querySelector('#authCode');
+if (authCode) return 'authcode';
+var body = document.body ? document.body.innerText : '';
+if (body.indexOf('認証し直す') >= 0 || body.indexOf('再度ログイン') >= 0 || body.indexOf('もう一度ログイン') >= 0)
+    return 'reauth';
+var errBox = document.querySelector('.err, .error, .errMsg, .errorMessage, [class*="error"]');
+if (errBox && errBox.innerText && errBox.innerText.trim().length > 0)
+    return 'error:' + errBox.innerText.trim().substring(0, 100);
+if (body.indexOf('メールアドレスまたはパスワードが正しくありません') >= 0)
+    return 'error:メールアドレスまたはパスワードが正しくありません';
+if (body.indexOf('ログインできませんでした') >= 0)
+    return 'error:ログインできませんでした';
+return 'unknown';
+]]
+
+    -- Vòng lặp login (retry nếu reauth)
+    while loginAttempt <= MAX_LOGIN_RETRY do
+        loginAttempt = loginAttempt + 1
+        notify(string.format("[#%d] Bấm ログイン (lần %d/%d)...", accountNum, loginAttempt, MAX_LOGIN_RETRY + 1), 2)
+
+        humanPause(0.6, 1.4)
+        local okLogin, loginDiag = clickWait(SEL_LOGINBTN, 10)
+        if not okLogin then
+            failReason = "bấm login lỗi: " .. tostring(loginDiag)
+            notify("[#" .. accountNum .. "] " .. failReason, 3)
+            uploadResult(key, id, "failed: " .. failReason, "failed")
+            return "CONTINUE", rec
+        end
+        notify("[#" .. accountNum .. "] Đã bấm ログイン — bắt đầu poll trạng thái...", 3)
+
+        -- ========== PHƯƠNG ÁN B: Poll song song 30s ==========
+        -- Loop tối đa 30s (6 lần × 5s):
+        --   - Check lỗi (sai pass) → fail ngay
+        --   - Check reauth → retry login ngay
+        --   - Check authCode → tiếp tục flow
+        --   - Chưa thấy gì → sleep 5s, tiếp tục poll
+        local maxPolls = math.floor(LOGIN_STATE_TIMEOUT / LOGIN_STATE_GAP)
+        local loginState = "unknown"
+        local pollCount = 0
+        local shouldRetryLogin = false
+
+        for poll = 1, maxPolls do
+            pollCount = poll
+            notify(string.format("[#%d] Poll trạng thái %d/%d...", accountNum, poll, maxPolls), 2)
+
+            local stateRes, stateDiag = evalStr(JS_CHECK_LOGIN_STATE)
+            if stateRes then
+                loginState = tostring(stateRes)
+            else
+                loginState = "eval_error:" .. tostring(stateDiag)
+            end
+
+            notify(string.format("[#%d] State: %s", accountNum, loginState), 2)
+
+            -- Case A: Trang nhập code → OK, tiếp tục flow
+            if loginState == "authcode" then
+                notify("[#" .. accountNum .. "] Thấy #authCode → tiếp tục flow", 3)
+                local okAuthCode, authDiag = clickWait("#authCode", 5)
+                if okAuthCode then
+                    notify("[#" .. accountNum .. "] Trang パスコード → chờ mail...", 3)
+                    passcodePassed = true
+                    break
+                end
+            end
+
+            -- Case B: Sai email/password → fail ngay (không chờ tiếp)
+            if loginState:sub(1, 6) == "error:" then
+                local errMsg = loginState:sub(7)
+                failReason = "sai email/password: " .. errMsg
+                notify("[#" .. accountNum .. "] " .. failReason, 3)
+                uploadResult(key, id, "failed: " .. failReason, "failed")
+                return "CONTINUE", rec
+            end
+
+            -- Case C: Bắt xác thực lại → đánh dấu retry, thoát poll loop
+            if loginState == "reauth" then
+                notify(string.format("[#%d] Bắt xác thực lại — chờ 5s rồi thử lại...", accountNum), 3)
+                sleep(5)
+                shouldRetryLogin = true
+                break
+            end
+
+            -- Chưa thấy gì → sleep 5s rồi poll tiếp
+            if poll < maxPolls then
+                notify(string.format("[#%d] Chưa thấy gì, chờ %ds...", accountNum, LOGIN_STATE_GAP), 2)
+                sleep(LOGIN_STATE_GAP)
+            end
+        end
+
+        -- Nếu đã vào trang passcode → thoát vòng login
+        if passcodePassed then
+            break
+        end
+
+        -- Nếu cần retry login → tiếp tục vòng while
+        if shouldRetryLogin then
+            -- continue to next iteration
+        else
+            -- Hết 30s mà vẫn không thấy gì → fail
+            failReason = string.format("không xác định được trạng thái sau login sau %ds (state=%s, %d lần poll)",
+                LOGIN_STATE_TIMEOUT, loginState, pollCount)
+            notify("[#" .. accountNum .. "] " .. failReason, 3)
+            uploadResult(key, id, "failed: " .. failReason, "failed")
+            return "CONTINUE", rec
+        end
+    end
+
+    -- Nếu retry hết lần mà vẫn reauth
+    if not passcodePassed then
+        failReason = "bắt xác thực lại quá " .. MAX_LOGIN_RETRY .. " lần"
         notify("[#" .. accountNum .. "] " .. failReason, 3)
         uploadResult(key, id, "failed: " .. failReason, "failed")
         return "CONTINUE", rec
     end
-    notify("[#" .. accountNum .. "] Đã bấm ログイン — chờ load...", 3)
-
-    sleep(5)
-    waitLoad(30)
-
-    -- Step 9: Chờ trang passcode
-    local okAuthCode, authDiag = clickWait("#authCode", 15)
-    if not okAuthCode then
-        -- Có thể: sai password, tài khoản bị khóa, hoặc đã login sẵn
-        failReason = "không thấy trang passcode (#authCode): " .. tostring(authDiag) .. " (có thể sai password hoặc tài khoản bị khóa)"
-        notify("[#" .. accountNum .. "] " .. failReason, 3)
-        uploadResult(key, id, "failed: " .. failReason, "failed")
-        return "CONTINUE", rec
-    end
-    notify("[#" .. accountNum .. "] Trang パスコード → chờ mail...", 3)
 
     -- Step 10: Poll lấy code
     local passcode, codeStatus, codeDiag = getChyusenCode(key, id, CODE_POLL_TRIES, CODE_POLL_GAP, CODE_POLL_MAX_SEC)
@@ -970,17 +937,15 @@ local function processOne(key, accountNum)
 
     notify("[#" .. accountNum .. "] ===== LOGIN THÀNH CÔNG =====", 3)
 
-    -- Step 13: Web tự chuyển đến trang apply sau login
-    -- Chờ trang load xong
+    -- Step 13: Chờ trang apply load
     sleep(2)
     waitLoad(30)
 
-    -- Step 14: Ứng tuyển 本人認証済み枠
-    notify("[#" .. accountNum .. "] Bắt đầu ứng tuyển 本人認証済み枠...", 3)
-    local okApply, errs, errCode = applyHonin()
+    -- Step 14: Ứng tuyển
+    notify("[#" .. accountNum .. "] Bắt đầu ứng tuyển...", 3)
+    local okApply, errs, errCode = applyAll()
 
-    -- Step 15: Upload kết quả. errCode = summary GỌN ("ok:1,3,5" / "ok:1,3-fail5" / "fail:1,3,5").
-    -- TOAST ngắn gọn = "[#acc] <summary>"; UPLOAD lên server kèm chi tiết lỗi (nếu có) để tra cứu.
+    -- Step 15: Upload kết quả
     local detail = tostring(errCode)
     if errs and #errs > 0 then detail = detail .. " | " .. table.concat(errs, "; ") end
     if okApply then
@@ -994,10 +959,6 @@ local function processOne(key, accountNum)
 end
 
 -- ================= LICENSE (tool: pokemontool) =================
--- Kiểm bản quyền theo SERIAL máy — KHÔNG cần key. License phải được kích hoạt gắn serial máy
--- này từ trước (admin bind). Ở đây chỉ hỏi server "máy này (serial) còn quyền dùng pokemontool
--- không?" qua POST /api/verify/device { tool, machineId }.
---   machineId = getSN() (serial máy).
 local LICENSE_BASE = "https://iosautos.com"
 local LICENSE_SLUG = "pokemontool"
 
@@ -1007,7 +968,6 @@ local function licPost(path, tbl)
     return jsonDecode(resp) or {}, st
 end
 
--- ensureLicense: check theo (serial, tool). Trả true nếu máy này còn quyền dùng tool.
 local function ensureLicense()
     local mid = trim(getSN())
     if mid == "" then notify("Không lấy được serial máy (getSN)", 5); return false end
@@ -1029,9 +989,8 @@ local function ensureLicense()
 end
 
 -- ========== MAIN LOOP ==========
-notify("========== CHYUSEN HONIN 本人認証済み枠 (vô hạn, dừng khi hết acc 100 lần liên tiếp) ==========", 3)
+notify("========== CHYUSEN v44-B (poll song song, sleep 5s) ==========", 3)
 
--- Đọc config
 local cfg, cfgErr = readConfig()
 if cfgErr then
     notify("Lỗi đọc config: " .. cfgErr .. " — dừng", 5)
@@ -1048,14 +1007,13 @@ end
 
 local successTotal = 0
 local failedTotal = 0
-local errorRetryCount = 0      -- đếm retry lỗi mạng/server liên tiếp
-local emptyRetryCount = 0      -- đếm retry khi hết acc liên tiếp
+local errorRetryCount = 0
+local emptyRetryCount = 0
 
 local n = 0
 while true do
     n = n + 1
 
-    -- MỖI lượt đều kiểm license trước (bắt kịp thu hồi/hết hạn giữa chừng). Không hợp lệ → dừng vòng.
     if not ensureLicense() then
         notify("Dừng: license pokemontool không hợp lệ", 4)
         break
@@ -1070,16 +1028,13 @@ while true do
     local ok, result = pcall(processOne, key, n)
 
     if not ok then
-        -- pcall catch lỗi bất ngờ
         local errStr = tostring(result)
 
-        -- Case: User dừng script
         if errStr:find("dừng", 1, true) or errStr:find("stop", 1, true) or errStr:find("abort", 1, true) then
             notify("Đã dừng theo yêu cầu người dùng (xong " .. successTotal .. " acc)", 3)
             break
         end
 
-        -- Case: Lỗi bất ngờ khác
         notify("Lượt #" .. n .. " lỗi bất ngờ: " .. errStr, 4)
         failedTotal = failedTotal + 1
         errorRetryCount = errorRetryCount + 1
@@ -1089,11 +1044,9 @@ while true do
             break
         end
     else
-        -- Xử lý result code
         if result == "STOP_EMPTY" then
-            -- Hết acc → tăng emptyRetryCount, chờ rồi thử lại
             emptyRetryCount = emptyRetryCount + 1
-            n = n - 1  -- không tính lượt này
+            n = n - 1
 
             if emptyRetryCount >= MAX_EMPTY_RETRY then
                 notify(string.format("Đã thử %d lần mà vẫn hết acc — DỪNG HẲN", MAX_EMPTY_RETRY), 4)
@@ -1114,8 +1067,7 @@ while true do
             notify("API endpoint không tồn tại — kết thúc vòng lặp", 4)
             break
         elseif result:find("^RETRY") then
-            -- Các case retry lỗi mạng/server
-            n = n - 1  -- không tính lượt này
+            n = n - 1
             errorRetryCount = errorRetryCount + 1
             if errorRetryCount >= MAX_ERROR_RETRY then
                 notify("Quá nhiều retry lỗi liên tiếp (" .. MAX_ERROR_RETRY .. ") — dừng", 4)
@@ -1124,16 +1076,13 @@ while true do
             notify("Retry sau 5s...", 2)
             sleep(5)
         elseif result == "CONTINUE" then
-            -- Đã xử lý xong 1 account (dù thành công hay thất bại)
-            -- QUAN TRỌNG: Có acc mới → RESET emptyRetryCount về 0
             if emptyRetryCount > 0 then
                 notify(string.format("Có acc mới! Reset empty retry counter (was %d)", emptyRetryCount), 3)
             end
             emptyRetryCount = 0
-            errorRetryCount = 0  -- reset error retry counter
+            errorRetryCount = 0
             successTotal = successTotal + 1
         else
-            -- Case không xác định
             notify("Result không xác định: " .. tostring(result) .. " — tiếp tục", 2)
             errorRetryCount = 0
         end
@@ -1148,44 +1097,24 @@ notify(string.format("TỔNG KẾT: %d acc xử lý, %d lỗi bất ngờ, chờ
 notify("========== KẾT THÚC ==========", 3)
 
 --[[
-  HƯỚNG DẪN CẤU HÌNH (本人認証済み枠 version):
+  HƯỚNG DẪN CẤU HÌNH (v44-B — Phương án B: poll song song):
 
-  1. MAX_EMPTY_RETRY = 100  → khi hết acc, thử lại tối đa 100 lần rồi dừng hẳn
-  2. EMPTY_RETRY_GAP = 10   → chờ 10s giữa mỗi lần retry khi hết acc
+  PHƯƠNG ÁN B - Poll song song sau login:
+    - Sau khi bấm login, KHÔNG chờ safari.load
+    - Loop tối đa 30s (6 lần × 5s):
+      + Check lỗi (sai pass) → FAIL NGAY (không chờ tiếp)
+      + Check reauth → RETRY LOGIN NGAY
+      + Check #authCode → TIẾP TỤC FLOW
+      + Chưa thấy gì → sleep 5s, tiếp tục poll
+    - Hết 30s mà không thấy gì → fail
 
-  FLOW ỨNG TUYỂN (các item trong APPLY_ITEMS của ul.comOrderList; cần daemon >= 1.0.44 có safari.eval):
-    Login → trang apply → (lặp từng item) 詳しく見る (dt) → chọn radio SP → tick 応募要項に同意する
-          → HID tap 応募する (nút form; safari.eval tìm nút hiển thị ngoài popup + lấy toạ độ)
-          → HID tap 応募する trong POPUP (safari.eval lấy toạ độ thật; fallback tap APPLY_MODAL_X/Y)
-          → dismissPopup() rồi sang item kế.
-  ĐỔI ITEM: sửa APPLY_ITEMS ở đầu file. 1 item = { 1 }; nhiều item = { 1, 5 } (chạy lần lượt/1 account).
-  KẾT QUẢ: result upload dạng "k/N item OK" (partial vẫn tính success + ghi item lỗi).
+  ƯU ĐIỂM:
+    - Sai pass → fail ngay sau ~5s (không chờ 30s vô ích)
+    - Reauth → retry ngay
+    - AuthCode → chờ đủ lâu cho page load (tối đa 30s)
+    - Không phụ thuộc safari.load (có thể timeout dù page OK)
 
-  LOGIC VÒNG LẶP:
-    - Chạy VÔ HẠN, không giới hạn số lượng account
-    - Khi hết acc (HTTP 409): chờ EMPTY_RETRY_GAP giây rồi thử lại
-    - Nếu có acc mới: RESET emptyRetryCount về 0 (tiếp tục vô hạn)
-    - Nếu thử MAX_EMPTY_RETRY lần liên tiếp mà vẫn hết: DỪNG HẲN
-
-  STOP CODES (dừng vòng lặp ngay):
-    STOP_AUTH    = apikey sai (HTTP 401/403)
-    STOP_CONFIG  = thiếu apikey trong config
-    STOP_API     = API endpoint không tồn tại (HTTP 404)
-
-  RETRY CODES (thử lại, tối đa MAX_ERROR_RETRY lần liên tiếp):
-    RETRY_NETWORK  = lỗi mạng tạm thời
-    RETRY_SERVER   = server lỗi (5xx)
-    RETRY_RATE     = rate limit (429)
-    RETRY_JSON     = API trả về JSON không hợp lệ
-    RETRY_UNKNOWN  = lỗi không xác định
-
-  FAIL REASONS (upload vào result với status=failed):
-    - content rỗng / sai định dạng / thiếu email / thiếu password
-    - email không hợp lệ (thiếu @)
-    - mở trang login lỗi
-    - gõ email/password/passcode lỗi
-    - bấm login/認証する lỗi
-    - không thấy trang passcode (sai password / tài khoản khóa)
-    - mail không tới / lỗi lấy code / thiếu email_forward/app_password
-    - apply lỗi (detail/radio/checkbox/applyBtn/popup-modal)
+  CẤU HÌNH:
+    LOGIN_STATE_TIMEOUT = 30    -- tổng thời gian poll (giây)
+    LOGIN_STATE_GAP     = 5     -- nghỉ giữa mỗi lần poll (giây)
 ]]

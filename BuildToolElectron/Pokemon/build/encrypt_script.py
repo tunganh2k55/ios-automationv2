@@ -17,8 +17,12 @@ ROOT = os.path.dirname(os.path.dirname(POKE))                  # repo gốc
 SRC_DIR = os.path.join(ROOT, "Demo", "pokemon")
 OUT_DIR = os.path.join(POKE, "scripts")
 
-# (tên nguồn .lua trong Demo/pokemon, tên đích .luax trong scripts/)
-SCRIPTS = [("reg-poke.lua", "reg-poke.luax")]
+# (đường dẫn nguồn .lua tương đối từ Demo/pokemon, tên đích .luax trong scripts/)
+SCRIPTS = [
+    ("reg/reg-poke.lua", "reg-poke.luax"),
+    ("chyusen/chyusen_honin.lua", "chyusen_honin.luax"),
+    ("chyusen/chyu_246.lua", "chyu_246.luax"),
+]
 
 
 def encrypt(base, src):
