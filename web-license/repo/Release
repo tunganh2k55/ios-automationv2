@@ -1,17 +1,20 @@
 Origin: iOSAuto
 Label: iOSAuto
 Suite: stable
-Version: 1.0.38
+Version: 1.0.44
 Codename: iosauto
 Architectures: iphoneos-arm64
 Components: main
 Description: iOSAuto Repository
 MD5Sum:
- 5c6a6a2f2c3527b12467db0e0f1ee6b3 737 Packages
- 7bb81277d1cc2125b2d92ff7a81d973c 420 Packages.gz
+ f42cc30fa3a2e8d5737834f037af6136 737 Packages
+ f113529f1b8198aee8fa942fdbc92aab 424 Packages.gz
+ 64cab74fccad5598c2e90297156a2fc7 489 Packages.bz2
 SHA1:
- c2481bc1454f84eb361d6457a98aa1fd71d61365 737 Packages
- 86ed16e792bfa0d6f2a992c0a4d0334f4959ff10 420 Packages.gz
+ 268d93723e75a8e5bc267436c8a7d5ac5459479a 737 Packages
+ 31b5b40c48c7542b54fce8f16e88e2fcdae4108e 424 Packages.gz
+ 8a9b50145200d10574fb796b245541f5946cf9e9 489 Packages.bz2
 SHA256:
- 4cb5216808150e2cbeb724240daf2de71deac0423924c9c629bdc8d29416cca6 737 Packages
- 09cbb3eedf65e61803120ad2be9ea2d6a76156be04211daaa22a606341c732db 420 Packages.gz
+ a29f218e8f62e077343aa8fdf653c181798020f40a36586d5deb1f73a3f7efa3 737 Packages
+ acea4d15178698b3fbaab716bfe770a7f6e9f71ae14aa893595179623b66c758 424 Packages.gz
+ 84d2800d982f9736cd53accc8e9f1ccc151b0f624b9dfbe02d22791837e62132 489 Packages.bz2
