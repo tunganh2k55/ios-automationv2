@@ -283,6 +283,7 @@ static int clear_safari_system_data(char *diag, size_t dlen) {
         @"/var/mobile/Library/Caches/com.apple.WebKit.WebContent",
         @"/var/mobile/Library/Caches/com.apple.WebKit.Networking",
         @"/var/mobile/Library/WebKit/com.apple.mobilesafari",
+        @"/var/mobile/Library/Saved Application State/com.apple.mobilesafari.savedState",  // state khôi phục tab khi mở lại
     ];
     for (NSString *dir in dirs) {
         BOOL isdir = NO;
