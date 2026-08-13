@@ -2157,10 +2157,8 @@ static NSString *IAWebCoord(NSString *b64field) {
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
                 "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];break;}}}"
                 "if(!el)return 'noel';"
-                "var r=el.getBoundingClientRect();"
-                "var inView=r.top>=0&&r.bottom<=window.innerHeight&&r.left>=0&&r.right<=window.innerWidth;"
-                "if(!inView)el.scrollIntoView({block:'nearest',inline:'nearest'});"
-                "r=el.getBoundingClientRect();var cx=r.left+r.width/2,cy=r.top+r.height/2;"
+                "el.scrollIntoView({block:'center',inline:'center'});"
+                "var r=el.getBoundingClientRect();var cx=r.left+r.width/2,cy=r.top+r.height/2;"
                 "return 'vp '+Math.round(cx)+','+Math.round(cy);"
                 "})('%@')", b64field];
             void (^cb)(id, id) = ^(id res, id err) {
@@ -2234,9 +2232,8 @@ static NSString *IAWebClick(NSString *b64field) {
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
                 "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];console.log('[IAWebClick] found by text');break;}}}"
                 "if(!el){console.log('[IAWebClick] noel');return 'noel';}"
+                "el.scrollIntoView({block:'center',inline:'center'});"
                 "var r=el.getBoundingClientRect();"
-                "var inView=r.top>=0&&r.bottom<=window.innerHeight&&r.left>=0&&r.right<=window.innerWidth;"
-                "if(!inView){el.scrollIntoView({block:'nearest',inline:'nearest'});r=el.getBoundingClientRect();}"
                 "var cx=r.left+r.width/2,cy=r.top+r.height/2;"
                 "console.log('[IAWebClick] rect='+JSON.stringify(r)+' center='+cx+','+cy);"
                 "return 'coord '+Math.round(cx)+','+Math.round(cy);"
