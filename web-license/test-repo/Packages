@@ -1,6 +1,6 @@
 Package: com.iosauto
 Name: iOSAuto
-Version: 1.0.38
+Version: 1.0.39
 Architecture: iphoneos-arm64
 Maintainer: iOSAuto Team
 Author: iOSAuto Team
@@ -12,8 +12,8 @@ Provides: com.iosauto.daemon, com.iosauto.touch, com.iosauto.app
 Icon: http://192.168.1.9:8000/CydiaIcon.png
 Depiction: http://192.168.1.9:8000/
 Description: iOSAuto - tu dong hoa iPhone. iOS 15-16 rootless.
-Filename: debs/com.iosauto_1.0.38_iphoneos-arm64.deb
-Size: 2321888
-MD5sum: 1f1dfe11ffdd514a50ff98077d173a19
-SHA1: 535606be7c75fbb6d912de6540f8a5b765ee1335
-SHA256: 7f93f578111a482ce59aa1b371020b4f0c67a2849b874e78f2677cefe1f242b1
+Filename: debs/com.iosauto_1.0.39_iphoneos-arm64.deb
+Size: 2321740
+MD5sum: a7481812258b18b9e35b4475d88e0bef
+SHA1: 665b7d5b4ee517bd7c6cbbdb96ef05a6c6dbe68f
+SHA256: ada4c79ef0fd05f5d968407edaaf310570a09fc023f7cfcec35fb0acef2b0d7e
