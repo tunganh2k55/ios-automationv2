@@ -55,6 +55,17 @@ upload_source() {
     scp -P "$MAC_PORT" -r "$PROJECT_DIR/app/repo" "$MAC_USER@$MAC_HOST:$REMOTE_DIR/app/"
 }
 
+# Đồng bộ version app (Info.plist) theo app/dist/control — GIỐNG bước "Sync app version"
+# trong CI (build.yml). Thiếu bước này thì make package copy nguyên Info.plist nguồn (0.7.4)
+# vào bundle → app hiện sai version dù Control gói là 1.0.x. Phải chạy TRƯỚC khi build app.
+sync_app_version() {
+    echo ">> Sync app version (Info.plist) theo dist/control..."
+    ssh_cmd "VER=\$(awk -F': ' '/^Version:/{print \$2; exit}' $REMOTE_DIR/app/dist/control); \
+        echo \"   app CFBundleShortVersionString -> \$VER\"; \
+        /usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString \$VER\" $REMOTE_DIR/app/app/Resources/Info.plist; \
+        /usr/libexec/PlistBuddy -c \"Set :CFBundleVersion \$VER\" $REMOTE_DIR/app/app/Resources/Info.plist"
+}
+
 # Build on Mac
 build_component() {
     local component=$1
@@ -82,9 +93,11 @@ upload_source
 
 if [ "$TARGET" = "all" ]; then
     build_component "daemon"
+    sync_app_version          # đồng bộ version TRƯỚC khi build app
     build_component "app"
     build_component "tweak"
 elif [ "$TARGET" = "daemon" ] || [ "$TARGET" = "app" ] || [ "$TARGET" = "tweak" ]; then
+    [ "$TARGET" = "app" ] && sync_app_version
     build_component "$TARGET"
 else
     echo "Unknown target: $TARGET"

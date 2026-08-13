@@ -707,6 +707,7 @@ static NSString *IADaysLeft(id iso) {
 @property (strong) NSArray *rows;        // info @[title,value]
 @property (strong) NSDictionary *statusDict;
 @property (strong) NSDictionary *lic;    // trạng thái license
+@property (strong) NSTimer *licPoll;     // poll lại /api/license khi daemon chưa phản hồi
 @end
 @implementation SettingsVC
 - (instancetype)init {
@@ -720,6 +721,7 @@ static NSString *IADaysLeft(id iso) {
 }
 - (void)viewDidLoad { [super viewDidLoad]; self.rows = @[]; [self build]; }
 - (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; [self load]; [self loadLicense]; }
+- (void)viewWillDisappear:(BOOL)a { [super viewWillDisappear:a]; [self stopLicPoll]; }
 - (void)load {
     [Api get:@"status" done:^(id j, NSError *e) {
         self.statusDict = [j isKindOfClass:[NSDictionary class]] ? j : nil; [self build];
@@ -727,9 +729,23 @@ static NSString *IADaysLeft(id iso) {
 }
 - (void)loadLicense {
     [Api get:@"license" done:^(id j, NSError *e) {
-        self.lic = [j isKindOfClass:[NSDictionary class]] ? j : nil; [self build];
+        if ([j isKindOfClass:[NSDictionary class]]) {
+            self.lic = j;
+            [self stopLicPoll];        // đã có kết quả → ngừng poll
+        } else {
+            // Daemon chưa phản hồi (đang boot / mất kết nối): GIỮ trạng thái cũ, KHÔNG
+            // set nil để tránh nhảy về "Đang kiểm tra…"; poll lại tới khi có kết quả.
+            [self startLicPoll];
+        }
+        [self build];
     }];
 }
+- (void)startLicPoll {
+    if (self.licPoll) return;
+    self.licPoll = [NSTimer scheduledTimerWithTimeInterval:2.0 target:self
+        selector:@selector(loadLicense) userInfo:nil repeats:YES];
+}
+- (void)stopLicPoll { [self.licPoll invalidate]; self.licPoll = nil; }
 - (void)build {
     NSDictionary *s = self.statusDict;
     NSDictionary *dev = s[@"device"];
