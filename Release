@@ -1,0 +1,14 @@
+Origin: iOSAuto
+Label: iOSAuto
+Suite: stable
+Version: 1.0
+Codename: ios
+Architectures: iphoneos-arm64
+Components: main
+Description: iOSAuto — iPhone automation (iOS 15-16 rootless)
+MD5Sum:
+ 00e25438d7e3447e10c7a85a98d40b9a 749 Packages
+ 6809805137e0c979d19db3e14becf32c 442 Packages.gz
+SHA256:
+ b055b7087e183cf7b30d23a09611e0b06bbcbc9d2430ea3ce5b25bfd63b93394 749 Packages
+ d9977172e8f1bdfac7b78d1569e40ec6f944e847d1de0562ad842230358791e4 442 Packages.gz
