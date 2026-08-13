@@ -2100,10 +2100,18 @@ static NSString *IAWebScrollTo(NSString *b64field) {
                 "for(var i=0;i<L.length;i++){var e=L[i];"
                 "var lab='';if(e.labels){for(var j=0;j<e.labels.length;j++)lab+=' '+(e.labels[j].textContent||'');}"
                 "var hay=[e.placeholder,e.name,e.id,e.type,e.value,e.getAttribute('aria-label'),lab].join(' ').toLowerCase();"
-                "if(hay.indexOf(f)>=0){el=e;break;}}}"
+                // 1.0.42 CU: "if(hay.indexOf(f)>=0){el=e;break;}}}"  (khong loc -> tom ca phan tu an <input> o 0,0)
+                "if(hay.indexOf(f)>=0){var rc=e.getBoundingClientRect();if(rc.width>0||rc.height>0){el=e;break;}}}}"   // 2) bo phan tu an (rect=0)
                 "if(!el){var A=document.querySelectorAll('body *');"                        // 3) khớp text hiển thị
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
                 "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];break;}}}"
+                // 1.0.42 buoc 4 MOI (chi chay khi buoc 1-3 fail): khop text-node cua CHINH element
+                //   (xu ly <span>text<small>..</small></span> co con) roi leo len phan tu click duoc.
+                "if(!el){var f4=field.toLowerCase(),B=document.querySelectorAll('body *'),best=null;"
+                "for(var m=0;m<B.length;m++){var nd=B[m],own='';"
+                "for(var c=0;c<nd.childNodes.length;c++){if(nd.childNodes[c].nodeType===3)own+=nd.childNodes[c].nodeValue;}"
+                "if(own.toLowerCase().indexOf(f4)>=0){var rb=nd.getBoundingClientRect();if(rb.width>0||rb.height>0)best=nd;}}"
+                "if(best)el=best.closest('a,button,li,[role],[onclick]')||best;}"
                 "if(!el)return 'noel';"
                 "var r=el.getBoundingClientRect();"
                 "var inView=r.top>=0&&r.bottom<=window.innerHeight&&r.left>=0&&r.right<=window.innerWidth;"
@@ -2152,10 +2160,18 @@ static NSString *IAWebCoord(NSString *b64field) {
                 "for(var i=0;i<L.length;i++){var e=L[i];"
                 "var lab='';if(e.labels){for(var j=0;j<e.labels.length;j++)lab+=' '+(e.labels[j].textContent||'');}"
                 "var hay=[e.placeholder,e.name,e.id,e.type,e.value,e.getAttribute('aria-label'),lab].join(' ').toLowerCase();"
-                "if(hay.indexOf(f)>=0){el=e;break;}}}"
+                // 1.0.42 CU: "if(hay.indexOf(f)>=0){el=e;break;}}}"  (khong loc -> tom ca phan tu an <input> o 0,0)
+                "if(hay.indexOf(f)>=0){var rc=e.getBoundingClientRect();if(rc.width>0||rc.height>0){el=e;break;}}}}"   // 2) bo phan tu an (rect=0)
                 "if(!el){var A=document.querySelectorAll('body *');"
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
                 "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];break;}}}"
+                // 1.0.42 buoc 4 MOI (chi chay khi buoc 1-3 fail): khop text-node cua CHINH element
+                //   (xu ly <span>text<small>..</small></span> co con) roi leo len phan tu click duoc.
+                "if(!el){var f4=field.toLowerCase(),B=document.querySelectorAll('body *'),best=null;"
+                "for(var m=0;m<B.length;m++){var nd=B[m],own='';"
+                "for(var c=0;c<nd.childNodes.length;c++){if(nd.childNodes[c].nodeType===3)own+=nd.childNodes[c].nodeValue;}"
+                "if(own.toLowerCase().indexOf(f4)>=0){var rb=nd.getBoundingClientRect();if(rb.width>0||rb.height>0)best=nd;}}"
+                "if(best)el=best.closest('a,button,li,[role],[onclick]')||best;}"
                 "if(!el)return 'noel';"
                 "el.scrollIntoView({block:'center',inline:'center'});"
                 "var r=el.getBoundingClientRect();var cx=r.left+r.width/2,cy=r.top+r.height/2;"
@@ -2219,10 +2235,18 @@ static NSString *IAWebClick(NSString *b64field) {
                 "for(var i=0;i<L.length;i++){var e=L[i];"
                 "var lab='';if(e.labels){for(var j=0;j<e.labels.length;j++)lab+=' '+(e.labels[j].textContent||'');}"
                 "var hay=[e.placeholder,e.name,e.id,e.type,e.value,e.getAttribute('aria-label'),lab].join(' ').toLowerCase();"
-                "if(hay.indexOf(f)>=0){el=e;break;}}}"
+                // 1.0.42 CU: "if(hay.indexOf(f)>=0){el=e;break;}}}"  (khong loc -> tom ca phan tu an <input> o 0,0)
+                "if(hay.indexOf(f)>=0){var rc=e.getBoundingClientRect();if(rc.width>0||rc.height>0){el=e;break;}}}}"   // 2) bo phan tu an (rect=0)
                 "if(!el){var A=document.querySelectorAll('body *');"
                 "for(var k=0;k<A.length;k++){var t=(A[k].textContent||'');"
                 "if(A[k].children.length===0&&t.toLowerCase().indexOf(f)>=0){el=A[k];break;}}}"
+                // 1.0.42 buoc 4 MOI (chi chay khi buoc 1-3 fail): khop text-node cua CHINH element
+                //   (xu ly <span>text<small>..</small></span> co con) roi leo len phan tu click duoc.
+                "if(!el){var f4=field.toLowerCase(),B=document.querySelectorAll('body *'),best=null;"
+                "for(var m=0;m<B.length;m++){var nd=B[m],own='';"
+                "for(var c=0;c<nd.childNodes.length;c++){if(nd.childNodes[c].nodeType===3)own+=nd.childNodes[c].nodeValue;}"
+                "if(own.toLowerCase().indexOf(f4)>=0){var rb=nd.getBoundingClientRect();if(rb.width>0||rb.height>0)best=nd;}}"
+                "if(best)el=best.closest('a,button,li,[role],[onclick]')||best;}"
                 "if(!el)return 'noel';"
                 "el.scrollIntoView({block:'center',inline:'center'});"
                 "var r=el.getBoundingClientRect();var x=r.left+r.width/2,y=r.top+r.height/2;"
