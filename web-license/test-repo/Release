@@ -7,8 +7,8 @@ Architectures: iphoneos-arm64
 Components: main
 Description: iOSAuto — iPhone automation (iOS 15-16 rootless)
 MD5Sum:
- 0df300b0a874d93d13f810905d132ec2 749 Packages
- b9de96c2881890fbdd174c2bb2488d2b 440 Packages.gz
+ dc80406d449ee6a4637e02ede1504b21 749 Packages
+ 8850511d99254f4b55170dd0e23b35a1 442 Packages.gz
 SHA256:
- 27c43af56e04ea22f6ebfbeac5f2ef88e2def9bfb991206f527205d099756616 749 Packages
- b57ec51008172ef2c679ff4c7c047c27d0c21a6e8d6a334b91a7f94a48ef903f 440 Packages.gz
+ 5c0772b5c8e4f597099404de58e9cf55e061228de68c9c18a9e3bb26ed52269c 749 Packages
+ 99203dfb1daa58acfd455f6c56bbfe48da83396799d43aed183c4f5f9ef27807 442 Packages.gz
