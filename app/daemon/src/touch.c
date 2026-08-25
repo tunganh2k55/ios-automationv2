@@ -635,7 +635,7 @@ int touch_safari_load(int timeout_sec, char *reply, size_t rlen) {
     long deadline_ms = (long)tv.tv_sec * 1000 + tv.tv_usec / 1000 + (long)timeout_sec * 1000;
     log_msg("safari.load: chờ trang load xong, tối đa %ds", timeout_sec);
     char last[600] = {0};
-    int polls = 0, noweb = 0;
+    int polls = 0, noweb = 0, fails = 0;
     for (;;) {
         // Check user đã bấm Dừng chưa — thoát ngay
         if (lua_run_cancelled()) {
@@ -645,6 +645,15 @@ int touch_safari_load(int timeout_sec, char *reply, size_t rlen) {
         char r[600] = {0};
         int rc = send_verb_core_to("WEBSTATE\n", r, sizeof(r), 0, 0, 4500);   // do_log=0: tránh spam ~170 dòng
         polls++;
+        // Log lần đầu hoặc khi fail liên tiếp để dễ debug
+        if (rc != 0) {
+            fails++;
+            if (fails == 1 || fails == 5 || fails == 10)
+                log_msg("safari.load: WEBSTATE fail #%d (rc=%d, reply=%.60s)", fails, rc, r[0] ? r : "(empty)");
+        } else {
+            if (fails > 0) log_msg("safari.load: WEBSTATE OK sau %d lần fail", fails);
+            fails = 0;
+        }
         if (rc == 0 && r[0]) snprintf(last, sizeof(last), "%s", r);
         if (rc == 0 && strstr(r, "complete")) {                 // "OK state complete"
             snprintf(reply, rlen, "OK loaded (%d lần hỏi) %s", polls, r);
@@ -660,7 +669,10 @@ int touch_safari_load(int timeout_sec, char *reply, size_t rlen) {
         gettimeofday(&tv, NULL);
         long now_ms = (long)tv.tv_sec * 1000 + tv.tv_usec / 1000;
         if (now_ms >= deadline_ms) {
-            snprintf(reply, rlen, "TIMEOUT sau %ds (trạng thái cuối: %s)", timeout_sec, last[0] ? last : "?");
+            if (fails > 0 && !last[0])
+                snprintf(reply, rlen, "TIMEOUT sau %ds (%d lần WEBSTATE fail liên tiếp - tweak không phản hồi?)", timeout_sec, fails);
+            else
+                snprintf(reply, rlen, "TIMEOUT sau %ds (trạng thái cuối: %s)", timeout_sec, last[0] ? last : "?");
             return 1;
         }
         usleep(350 * 1000);                                     // nghỉ 350ms giữa mỗi lần hỏi readyState
@@ -708,4 +720,43 @@ int touch_ocr_region(char *reply, size_t rlen, const char *lang, int rx, int ry,
             sz / 1024, lang, rx, ry, rw, rh, t1 - t0, t2 - t1);
     free(verb);
     return r;
+}
+
+// ============================================================================
+// CLIENT REGISTRY - cho InputManager
+// ============================================================================
+
+// Lấy danh sách client đang kết nối (cho input_manager.c)
+// bundles: mảng char[max][128] nhận bundle ID
+// is_sb: mảng int[max] nhận cờ is_springboard
+// Trả số client
+int touch_get_clients(char bundles[][128], int *is_sb, int max_clients) {
+    pthread_mutex_lock(&g_mu);
+    reap_dead_locked();
+
+    int n = g_nclients < max_clients ? g_nclients : max_clients;
+    for (int i = 0; i < n; i++) {
+        snprintf(bundles[i], 128, "%s", g_bundle[i][0] ? g_bundle[i] : "?");
+        is_sb[i] = is_springboard(g_bundle[i]);
+    }
+
+    pthread_mutex_unlock(&g_mu);
+    return n;
+}
+
+// Check SpringBoard có kết nối không
+int touch_springboard_connected(void) {
+    pthread_mutex_lock(&g_mu);
+    reap_dead_locked();
+
+    int found = 0;
+    for (int i = 0; i < g_nclients; i++) {
+        if (is_springboard(g_bundle[i])) {
+            found = 1;
+            break;
+        }
+    }
+
+    pthread_mutex_unlock(&g_mu);
+    return found;
 }

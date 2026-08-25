@@ -3,6 +3,7 @@
 #include "lauxlib.h"
 #include "lualib.h"
 #include "touch.h"
+#include "input_manager.h"
 #include "appctl.h"
 #include "imgmatch.h"
 #include "fbcap.h"
@@ -92,19 +93,68 @@ static int l_print(lua_State *L) {
     return 0;
 }
 
-// tap(x, y)
+// tap(x, y) — sử dụng Unified InputManager
 static int l_tap(lua_State *L) {
     char e[128];
-    touch_tap((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2), e, sizeof(e));
+    input_tap((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2), e, sizeof(e));
     return 0;
 }
-// swipe(x1, y1, x2, y2 [, duration])
+// swipe(x1, y1, x2, y2 [, duration]) — sử dụng Unified InputManager
 static int l_swipe(lua_State *L) {
     char e[128];
     double dur = (lua_gettop(L) >= 5) ? luaL_checknumber(L, 5) : 0.3;
-    touch_swipe((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2),
+    input_swipe((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2),
                 (int)luaL_checknumber(L, 3), (int)luaL_checknumber(L, 4), dur, e, sizeof(e));
     return 0;
+}
+// ============================================================================
+// TOUCH PRIMITIVES — cho real-time control (DOWN/MOVE/UP)
+// ============================================================================
+// touchDown(x, y) → sessionId (>0) hoặc 0 nếu lỗi
+static int l_touchDown(lua_State *L) {
+    char e[128];
+    int sid = input_touch_down((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2), e, sizeof(e));
+    lua_pushinteger(L, sid);
+    return 1;
+}
+// touchMove(x, y) → true/false
+static int l_touchMove(lua_State *L) {
+    char e[128];
+    int rc = input_touch_move((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2), e, sizeof(e));
+    lua_pushboolean(L, rc >= 0);
+    return 1;
+}
+// touchUp(x, y) → true/false
+static int l_touchUp(lua_State *L) {
+    char e[128];
+    int rc = input_touch_up((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2), e, sizeof(e));
+    lua_pushboolean(L, rc == 0);
+    return 1;
+}
+// touchCancel() → true/false
+static int l_touchCancel(lua_State *L) {
+    (void)L;
+    char e[128];
+    int rc = input_touch_cancel(e, sizeof(e));
+    lua_pushboolean(L, rc == 0);
+    return 1;
+}
+// longPress(x, y [, duration]) → true/false
+static int l_longPress(lua_State *L) {
+    char e[128];
+    double dur = (lua_gettop(L) >= 3) ? luaL_checknumber(L, 3) : 1.0;
+    int rc = input_long_press((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2), dur, e, sizeof(e));
+    lua_pushboolean(L, rc == 0);
+    return 1;
+}
+// drag(x1, y1, x2, y2 [, duration]) — alias của swipe cho rõ ràng
+static int l_drag(lua_State *L) {
+    char e[128];
+    double dur = (lua_gettop(L) >= 5) ? luaL_checknumber(L, 5) : 0.5;
+    int rc = input_drag((int)luaL_checknumber(L, 1), (int)luaL_checknumber(L, 2),
+                        (int)luaL_checknumber(L, 3), (int)luaL_checknumber(L, 4), dur, e, sizeof(e));
+    lua_pushboolean(L, rc == 0);
+    return 1;
 }
 // input(text) — gõ vào ô nhập đang focus
 static int l_input(lua_State *L) {
@@ -891,6 +941,12 @@ static void register_funcs(lua_State *L) {
     lua_register(L, "setCaptureInterval", l_setCaptureInterval);
     lua_register(L, "tap", l_tap);
     lua_register(L, "swipe", l_swipe);
+    lua_register(L, "touchDown", l_touchDown);     // touch primitives
+    lua_register(L, "touchMove", l_touchMove);
+    lua_register(L, "touchUp", l_touchUp);
+    lua_register(L, "touchCancel", l_touchCancel);
+    lua_register(L, "longPress", l_longPress);
+    lua_register(L, "drag", l_drag);
     lua_register(L, "input", l_input);
     lua_register(L, "launch", l_launch);
     lua_register(L, "appRun", l_launch);   // alias tiện dùng (giống launch)

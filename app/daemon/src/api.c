@@ -3,6 +3,7 @@
 #include "video.h"
 #include "appctl.h"
 #include "touch.h"
+#include "input_manager.h"
 #include "lua_bind.h"
 #include "scripts.h"
 #include "scriptcrypt.h"
@@ -528,23 +529,76 @@ int api_handle(const http_req *req, http_resp *resp) {
         return 1;
     }
 
-    // POST tap
+    // POST tap — sử dụng Unified InputManager
     if (!strcmp(route, "tap")) {
         int x = 0, y = 0; char err[128] = {0};
         json_get_int(b, bl, "x", &x); json_get_int(b, bl, "y", &y);
-        int rc = touch_tap(x, y, err, sizeof(err));
+        int rc = input_tap(x, y, err, sizeof(err));
         resp_ok_msg(resp, rc == 0, err);
         return 1;
     }
 
-    // POST swipe
+    // POST swipe — sử dụng Unified InputManager
     if (!strcmp(route, "swipe")) {
         int x1 = 0, y1 = 0, x2 = 0, y2 = 0; double dur = 0.3; char err[128] = {0};
         json_get_int(b, bl, "x1", &x1); json_get_int(b, bl, "y1", &y1);
         json_get_int(b, bl, "x2", &x2); json_get_int(b, bl, "y2", &y2);
         json_get_double(b, bl, "duration", &dur);
-        int rc = touch_swipe(x1, y1, x2, y2, dur, err, sizeof(err));
+        int rc = input_swipe(x1, y1, x2, y2, dur, err, sizeof(err));
         resp_ok_msg(resp, rc == 0, err);
+        return 1;
+    }
+
+    // POST touch — Unified touch primitives (DOWN/MOVE/UP)
+    // Body: {"phase": "down"|"move"|"up"|"cancel", "x": 200, "y": 300}
+    // Trả: {"ok": true, "sessionId": 123} cho down; {"ok": true} cho move/up
+    if (!strcmp(route, "touch")) {
+        char phase[16] = {0}; int x = 0, y = 0; char err[128] = {0};
+        json_get_str(b, bl, "phase", phase, sizeof(phase));
+        json_get_int(b, bl, "x", &x); json_get_int(b, bl, "y", &y);
+
+        int rc = -1;
+        if (!strcmp(phase, "down") || !strcmp(phase, "d")) {
+            int sid = input_touch_down(x, y, err, sizeof(err));
+            if (sid > 0) {
+                char *body = malloc(128);
+                snprintf(body, 128, "{\"ok\":true,\"sessionId\":%d}", sid);
+                resp_json(resp, 200, body);
+                return 1;
+            }
+            rc = -1;
+        } else if (!strcmp(phase, "move") || !strcmp(phase, "m")) {
+            rc = input_touch_move(x, y, err, sizeof(err));
+        } else if (!strcmp(phase, "up") || !strcmp(phase, "u")) {
+            rc = input_touch_up(x, y, err, sizeof(err));
+        } else if (!strcmp(phase, "cancel") || !strcmp(phase, "c")) {
+            rc = input_touch_cancel(err, sizeof(err));
+        } else {
+            snprintf(err, sizeof(err), "phase phải là down/move/up/cancel");
+            rc = -1;
+        }
+        resp_ok_msg(resp, rc == 0, err[0] ? err : "OK");
+        return 1;
+    }
+
+    // POST longpress — nhấn giữ
+    if (!strcmp(route, "longpress")) {
+        int x = 0, y = 0; double dur = 1.0; char err[128] = {0};
+        json_get_int(b, bl, "x", &x); json_get_int(b, bl, "y", &y);
+        json_get_double(b, bl, "duration", &dur);
+        int rc = input_long_press(x, y, dur, err, sizeof(err));
+        resp_ok_msg(resp, rc == 0, err);
+        return 1;
+    }
+
+    // GET input/status — debug API cho InputManager
+    if (!strcmp(route, "input/status")) {
+        char *json = input_status_json();
+        if (json) {
+            resp_json(resp, 200, json);
+        } else {
+            resp_ok_msg(resp, 0, "không lấy được status");
+        }
         return 1;
     }
 

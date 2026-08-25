@@ -107,4 +107,17 @@ int touch_safari_load(int timeout_sec, char *reply, size_t rlen);
 // "ERR ...". Dùng để SOI DOM (viết selector chuẩn). Trả 0 nếu OK.
 int touch_safari_eval(const char *js, char *reply, size_t rlen);
 
+// ============================================================================
+// CLIENT REGISTRY (cho InputManager)
+// ============================================================================
+
+// Lấy danh sách client tweak đang kết nối
+// bundles: mảng char[max][128] nhận bundle ID
+// is_sb: mảng int[max] nhận cờ is_springboard
+// Trả số client
+int touch_get_clients(char bundles[][128], int *is_sb, int max_clients);
+
+// Check SpringBoard tweak có kết nối không
+int touch_springboard_connected(void);
+
 #endif

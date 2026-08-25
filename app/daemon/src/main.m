@@ -2,6 +2,7 @@
 #include "httpd.h"
 #include "api.h"
 #include "touch.h"
+#include "input_manager.h"
 #include "video.h"
 #include "scripts.h"
 #include "images.h"
@@ -64,6 +65,7 @@ int main(int argc, char **argv) {
         iosauto_mem_log("startup");
         api_init(port, usb_port);
         touch_init();
+        input_manager_init();   // Unified Input Manager (sau touch_init)
         video_init();
         scripts_init();
         images_init();
