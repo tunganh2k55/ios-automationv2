@@ -33,10 +33,10 @@
         </div>
         <label>Email user <span class="hint">(tuỳ chọn — gắn key cho tài khoản)</span></label>
         <input id="iEmail" type="email" placeholder="user@email.com">
-        <div class="row2">
-          <div><label>Serial <span class="hint">(tuỳ chọn)</span></label><input id="iMid" type="text" placeholder="AB12CD34" autocapitalize="characters"></div>
-          <div><label>Ghi chú</label><input id="iNote" type="text" placeholder="Tên khách / đơn…"></div>
-        </div>
+        <label>Serial <span class="hint">(tuỳ chọn — mỗi dòng 1 serial để cấp nhiều key cùng lúc)</span></label>
+        <textarea id="iMid" rows="6" placeholder="AB12CD34&#10;EF56GH78&#10;… (15 dòng = 15 key)" autocapitalize="characters" style="width:100%;font-family:monospace;resize:vertical"></textarea>
+        <label>Ghi chú</label>
+        <input id="iNote" type="text" placeholder="Tên khách / đơn…">
         <button class="primary" id="iBtn">Cấp key</button>
         <div class="msg" id="iMsg"></div>
       </div>
@@ -57,6 +57,7 @@
         <h2 style="margin:0">Danh sách license</h2>
         <span class="pill" id="count"></span>
         <div class="spacer" style="flex:1"></div>
+        <input id="fUser" type="search" placeholder="Lọc theo email user…" style="width:auto">
         <select id="fTool" style="width:auto"><option value="">— Tất cả tool —</option></select>
       </div>
       <table style="margin-top:12px"><thead><tr>

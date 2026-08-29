@@ -27,10 +27,17 @@ function fillPlans() {
 }
 ($('#iTool') as HTMLSelectElement).onchange = fillPlans;
 ($('#fTool') as HTMLSelectElement).onchange = loadList;
+let userFilterTimer: any;
+($('#fUser') as HTMLInputElement).oninput = () => { clearTimeout(userFilterTimer); userFilterTimer = setTimeout(loadList, 300); };
 
 async function loadList() {
   try {
-    const q = ($('#fTool') as HTMLSelectElement).value ? '?tool=' + encodeURIComponent(($('#fTool') as HTMLSelectElement).value) : '';
+    const params = new URLSearchParams();
+    const tool = ($('#fTool') as HTMLSelectElement).value;
+    if (tool) params.set('tool', tool);
+    const user = ($('#fUser') as HTMLInputElement).value.trim();
+    if (user) params.set('user', user);
+    const q = params.toString() ? '?' + params.toString() : '';
     const r = await api('/api/admin/licenses' + q);
     const tb = $('#body');
     tb.innerHTML = r.licenses.length ? '' : '<tr><td colspan="9" class="sub">Chưa có license.</td></tr>';
@@ -56,10 +63,13 @@ async function loadList() {
   try {
     const r = await api('/api/admin/issue', { method: 'POST', body: {
       toolId: ($('#iTool') as HTMLSelectElement).value, plan: ($('#iPlan') as HTMLSelectElement).value,
-      userEmail: ($('#iEmail') as HTMLInputElement).value, machineId: ($('#iMid') as HTMLInputElement).value,
+      userEmail: ($('#iEmail') as HTMLInputElement).value, machineId: ($('#iMid') as HTMLTextAreaElement).value,
       note: ($('#iNote') as HTMLInputElement).value } });
-    m.className = 'msg ok'; m.textContent = 'Đã cấp: ' + r.license.key;
-    ($('#iMid') as HTMLInputElement).value = ''; ($('#iNote') as HTMLInputElement).value = ''; ($('#iEmail') as HTMLInputElement).value = '';
+    const keys = (r.licenses || [r.license]).map((l: any) => l.key);
+    m.className = 'msg ok';
+    m.textContent = keys.length > 1 ? `Đã cấp ${keys.length} key:\n` + keys.join('\n') : 'Đã cấp: ' + keys[0];
+    ($('#iMsg') as HTMLElement).style.whiteSpace = 'pre-wrap';
+    ($('#iMid') as HTMLTextAreaElement).value = ''; ($('#iNote') as HTMLInputElement).value = ''; ($('#iEmail') as HTMLInputElement).value = '';
     loadList();
   } catch (e) { m.className = 'msg bad'; m.textContent = (e as Error).message; }
 };

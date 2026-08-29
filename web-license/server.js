@@ -150,6 +150,23 @@ function checkWebhookSecret(req) {
   return got === want;
 }
 
+// Fan-out: web2m chỉ cho 1 URL webhook / 1 tài khoản ngân hàng. Khi NHIỀU app
+// dùng CHUNG tài khoản (vd imapicloud), app nhận webhook chuyển tiếp nguyên
+// payload sang các URL khác trong WEB2M_FORWARD_URLS (ngăn cách bằng dấu phẩy).
+// Mỗi bên tự lọc mã đơn của mình. Fire-and-forget: lỗi/độ trễ KHÔNG ảnh hưởng
+// phản hồi trả về cho web2m.
+function forwardWebhook(body) {
+  const urls = String(process.env.WEB2M_FORWARD_URLS || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  if (!urls.length) return;
+  const payload = JSON.stringify(body);
+  for (const url of urls) {
+    fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: payload })
+      .then(r => console.log(`↪️  forward web2m → ${url} [${r.status}]`))
+      .catch(e => console.warn(`⚠️  forward web2m → ${url} lỗi: ${e.message}`));
+  }
+}
+
 // Chuẩn hoá 1 giao dịch từ payload webhook (chấp nhận nhiều tên trường theo từng nhà cung cấp).
 function normalizeTx(raw) {
   const pick = (...ks) => { for (const k of ks) if (raw[k] != null && raw[k] !== '') return raw[k]; return undefined; };
@@ -574,6 +591,8 @@ app.post('/api/webhook/web2m', wrap(async (req, res) => {
   if (!checkWebhookSecret(req)) return res.status(401).json({ success: false, msg: 'Sai secret' });
 
   const body = req.body || {};
+  forwardWebhook(body); // chuyển tiếp cho các app dùng chung tài khoản (vd imapicloud)
+
   const list = Array.isArray(body) ? body
     : Array.isArray(body.data) ? body.data
     : Array.isArray(body.transactions) ? body.transactions
@@ -671,7 +690,11 @@ app.patch('/api/admin/tools/:id', requireAdmin, wrap(async (req, res) => {
 
 // --- Licenses ---
 app.get('/api/admin/licenses', requireAdmin, wrap(async (req, res) => {
-  res.json({ ok: true, licenses: await licenses.listAll({ toolId: req.query.tool || undefined }) });
+  let list = await licenses.listAll({ toolId: req.query.tool || undefined });
+  // Lọc theo user (email chứa chuỗi tìm — không phân biệt hoa/thường).
+  const uq = String(req.query.user || '').toLowerCase().trim();
+  if (uq) list = list.filter((l) => String(l.userEmail || '').toLowerCase().includes(uq));
+  res.json({ ok: true, licenses: list });
 }));
 
 app.post('/api/admin/issue', requireAdmin, wrap(async (req, res) => {
@@ -686,19 +709,36 @@ app.post('/api/admin/issue', requireAdmin, wrap(async (req, res) => {
     owner = await users.byEmail(email);
     if (!owner) return res.status(404).json({ ok: false, msg: 'Không tìm thấy user với email đó' });
   }
-  const lic = {
-    key: genKey(tool.slug),
-    toolId: tool.id, toolSlug: tool.slug, toolName: tool.name,
-    userId: owner ? owner.id : null, userEmail: owner ? owner.email : null,
-    machineId: normalizeMachineId(req.body.machineId) || null,
-    plan,
-    createdAt: new Date().toISOString(),
-    expiresAt: (normalizeMachineId(req.body.machineId) || null)
-      ? (expiryFromPlan(tool.plans, plan) ?? null) : null, // chưa kích hoạt → chưa tính hạn
-    status: 'active', paid: 'admin', note: String(req.body.note || '').slice(0, 200),
-  };
-  await licenses.insert(lic);
-  res.json({ ok: true, license: lic });
+
+  // Serial: cho phép NHIỀU DÒNG (mỗi dòng 1 serial) → cấp nhiều key cùng lúc.
+  // Bỏ dòng trống, loại trùng. Không có serial nào → cấp 1 key chưa gắn máy (như cũ).
+  const serials = [];
+  const seen = new Set();
+  for (const line of String(req.body.machineId || '').split(/\r?\n/)) {
+    const mid = normalizeMachineId(line);
+    if (mid && !seen.has(mid)) { seen.add(mid); serials.push(mid); }
+  }
+  const targets = serials.length ? serials : [null];
+
+  const now = new Date().toISOString();
+  const note = String(req.body.note || '').slice(0, 200);
+  const created = [];
+  for (const machineId of targets) {
+    const lic = {
+      key: genKey(tool.slug),
+      toolId: tool.id, toolSlug: tool.slug, toolName: tool.name,
+      userId: owner ? owner.id : null, userEmail: owner ? owner.email : null,
+      machineId: machineId || null,
+      plan,
+      createdAt: now,
+      expiresAt: machineId ? (expiryFromPlan(tool.plans, plan) ?? null) : null, // chưa kích hoạt → chưa tính hạn
+      status: 'active', paid: 'admin', note,
+    };
+    await licenses.insert(lic);
+    created.push(lic);
+  }
+  // Tương thích ngược: vẫn trả `license` (bản đầu) + thêm `licenses` (tất cả).
+  res.json({ ok: true, license: created[0], licenses: created, count: created.length });
 }));
 
 // Kích hoạt/gán serial (admin). 1 license chỉ gắn 1 Machine ID — đã gắn thì KHÔNG đổi được.
