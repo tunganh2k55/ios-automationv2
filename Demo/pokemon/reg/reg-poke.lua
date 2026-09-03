@@ -488,10 +488,10 @@ function main()
   notify("Email: " .. email, 3)
 
   -- Ghép FULL thông tin (email + info đã claim) 1 lần — dùng cho upload dù THÀNH CÔNG hay THẤT BẠI.
-  -- Thứ tự: email|nickname|name_tv|name_tn|year|month|day|gender|postal|address1|address2|phone|password
+  -- Thứ tự ĐÚNG theo API response: nickname|email|name_tv|name_tn|birth_year|birth_month|birth_day|gender|postal_code|address1|address2|phone|password|email_forward|app_password
   local content = table.concat({
-    email,
     tostring(rec.nickname or ""),
+    email,
     tostring(rec.name_tv or ""),
     tostring(rec.name_tn or ""),
     tostring(rec.birth_year or ""),
@@ -503,6 +503,8 @@ function main()
     tostring(rec.address2 or ""),
     tostring(rec.phone or ""),
     tostring(rec.password or ""),
+    tostring(rec.email_forward or ""),
+    tostring(rec.app_password or ""),
   }, "|")
 
 
