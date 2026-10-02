@@ -361,12 +361,9 @@ int input_touch_cancel(char *err, size_t err_len) {
 // ============================================================================
 
 int input_tap(int x, int y, char *err, size_t err_len) {
-    int sid = input_touch_down(x, y, err, err_len);
-    if (sid <= 0) return -1;
-
-    usleep(50 * 1000);  // 50ms delay
-
-    return input_touch_up(x, y, err, err_len);
+    // Mọi tap một điểm dùng chung đường touch_tap(). Hàm này ưu tiên HID system-level
+    // và chỉ fallback về tweak in-process khi thiết bị không hỗ trợ.
+    return touch_tap(x, y, err, err_len);
 }
 
 int input_swipe(int x1, int y1, int x2, int y2, double duration_sec, char *err, size_t err_len) {

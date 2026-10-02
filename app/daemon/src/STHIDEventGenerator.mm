@@ -478,6 +478,73 @@ static uint32_t hidUsageCodeForCharacter(NSString *key) {
     return 0;
 }
 
+- (BOOL)typeText:(NSString *)text {
+    if (!gIOKitLoaded || !_IOHIDEventCreateKeyboardEvent || !text) return NO;
+
+    NSMutableArray<NSNumber *> *usages = [NSMutableArray arrayWithCapacity:text.length];
+    NSMutableArray<NSNumber *> *needsShift = [NSMutableArray arrayWithCapacity:text.length];
+    for (NSUInteger i = 0; i < text.length; i++) {
+        unichar c = [text characterAtIndex:i];
+        BOOL shifted = NO;
+        NSString *base = nil;
+
+        if (c >= 'A' && c <= 'Z') {
+            shifted = YES;
+            base = [NSString stringWithFormat:@"%C", (unichar)(c + ('a' - 'A'))];
+        } else {
+            switch (c) {
+                case '!': base = @"1"; shifted = YES; break;
+                case '@': base = @"2"; shifted = YES; break;
+                case '#': base = @"3"; shifted = YES; break;
+                case '$': base = @"4"; shifted = YES; break;
+                case '%': base = @"5"; shifted = YES; break;
+                case '^': base = @"6"; shifted = YES; break;
+                case '&': base = @"7"; shifted = YES; break;
+                case '*': base = @"8"; shifted = YES; break;
+                case '(': base = @"9"; shifted = YES; break;
+                case ')': base = @"0"; shifted = YES; break;
+                case '_': base = @"-"; shifted = YES; break;
+                case '+': base = @"="; shifted = YES; break;
+                case '{': base = @"["; shifted = YES; break;
+                case '}': base = @"]"; shifted = YES; break;
+                case '|': base = @"\\"; shifted = YES; break;
+                case ':': base = @";"; shifted = YES; break;
+                case '"': base = @"'"; shifted = YES; break;
+                case '~': base = [NSString stringWithFormat:@"%C", (unichar)0x60]; shifted = YES; break;
+                case '<': base = @","; shifted = YES; break;
+                case '>': base = @"."; shifted = YES; break;
+                case '?': base = @"/"; shifted = YES; break;
+                default: base = [NSString stringWithFormat:@"%C", c]; break;
+            }
+        }
+
+        uint32_t usage = hidUsageCodeForCharacter(base);
+        if (!usage) return NO;
+        [usages addObject:@(usage)];
+        [needsShift addObject:@(shifted)];
+    }
+
+    for (NSUInteger i = 0; i < usages.count; i++) {
+        BOOL shifted = needsShift[i].boolValue;
+        uint32_t usage = usages[i].unsignedIntValue;
+        if (shifted) {
+            [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad
+                                    usage:kHIDUsage_KeyboardLeftShift isKeyDown:true];
+            usleep(12000);
+        }
+        [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:usage isKeyDown:true];
+        usleep(18000);
+        [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad usage:usage isKeyDown:false];
+        if (shifted) {
+            usleep(10000);
+            [self _sendIOHIDKeyboardEvent:kHIDPage_KeyboardOrKeypad
+                                    usage:kHIDUsage_KeyboardLeftShift isKeyDown:false];
+        }
+        usleep(45000);
+    }
+    return YES;
+}
+
 - (void)keyPress:(NSString *)character {
     struct timespec pressDelay = {0, (long)(fingerLiftDelay * nanosecondsPerSecond)};
     uint32_t usage = hidUsageCodeForCharacter(character);
@@ -518,15 +585,14 @@ extern "C" void sthid_tap(float x, float y) {
         // Lấy pixel size từ generator (750x1334 cho iPhone 7)
         CGSize pixelSize = [gen physicalScreenSize];
 
-        // Tính scale: pixel / point. Fallback scale=2 nếu chưa có thông tin.
-        CGFloat scale = 2.0;
-        if (pw > 0 && pixelSize.width > 0) {
-            scale = pixelSize.width / (CGFloat)pw;
-        }
+        // Scale X/Y độc lập. Một số máy có tỉ lệ pixel/point hai trục khác nhau khi
+        // physicalScreenSize dùng giá trị fallback; dùng một scale theo chiều rộng sẽ làm lệch Y.
+        CGFloat scaleX = (pw > 0 && pixelSize.width > 0) ? pixelSize.width / (CGFloat)pw : 2.0;
+        CGFloat scaleY = (ph > 0 && pixelSize.height > 0) ? pixelSize.height / (CGFloat)ph : 2.0;
 
-        CGPoint pixelPt = CGPointMake(x * scale, y * scale);
-        log_msg("sthid_tap: point(%.0f,%.0f) * scale=%.1f → pixel(%.0f,%.0f)",
-                x, y, scale, pixelPt.x, pixelPt.y);
+        CGPoint pixelPt = CGPointMake(x * scaleX, y * scaleY);
+        log_msg("sthid_tap: point(%.0f,%.0f) * scale=(%.2f,%.2f) → pixel(%.0f,%.0f)",
+                x, y, scaleX, scaleY, pixelPt.x, pixelPt.y);
 
         // Dùng touchDown + liftUp riêng với delay 150ms (như VNC click thực tế)
         // thay vì tap() chỉ 50ms - một số web element cần thời gian nhấn dài hơn
@@ -538,4 +604,11 @@ extern "C" void sthid_tap(float x, float y) {
 
 extern "C" int sthid_available(void) {
     return [[STHIDEventGenerator sharedGenerator] isAvailable] ? 1 : 0;
+}
+
+extern "C" int sthid_type(const char *utf8) {
+    if (!utf8) return 1;
+    NSString *text = [NSString stringWithUTF8String:utf8];
+    if (!text) return 1;
+    return [[STHIDEventGenerator sharedGenerator] typeText:text] ? 0 : 1;
 }

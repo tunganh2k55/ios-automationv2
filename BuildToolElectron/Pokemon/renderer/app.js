@@ -13,6 +13,20 @@ const appLicCache = {}; // id -> { activated, reason, tierName, plan, expiresAt 
 const selected = new Set();   // id thiết bị đang tick chọn (cho chạy/dừng hàng loạt)
 let runningState = {};        // id -> đang chạy script? (poll nhẹ để đổi nút Chạy↔Dừng)
 
+// Pool giới hạn số luồng song song — dùng cho license check tránh lag server.
+async function poolLimit(items, limit, worker) {
+  const results = [];
+  let idx = 0;
+  const runners = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (idx < items.length) {
+      const i = idx++;
+      results[i] = await worker(items[i]);
+    }
+  });
+  await Promise.all(runners);
+  return results;
+}
+
 // ----- Toast thông báo (góc phải dưới) -----
 const ICONS = { warn: "⚠️", bad: "⛔", ok: "✅", info: "ℹ️" };
 function toast(msg, { type = "info", timeout = 4000 } = {}) {
@@ -112,7 +126,8 @@ async function scan() {
     scanning = false;
     runningState = {}; noticeDismissed = false; autoUploaded = new Set();   // quét mới → reset
     renderAll();
-    Promise.all(devices.map((d) => Promise.all([refreshLicense(d), fetchAppLicense(d)]))).then(() => {
+    // Giới hạn 4 luồng song song khi check license tránh lag server key
+    poolLimit(devices, 4, async (d) => { await refreshLicense(d); await fetchAppLicense(d); }).then(() => {
       const bad = devices.filter((d) => licCache[d.id] && !licCache[d.id].valid);
       if (bad.length) toast(`${bad.length} thiết bị chưa kích hoạt pokemontool`, { type: "warn", timeout: 6000 });
       pollRunning();      // quét trạng thái chạy ngay sau khi có danh sách

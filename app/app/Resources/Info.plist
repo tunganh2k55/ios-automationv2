@@ -12,9 +12,9 @@
 	<string>iOSAutoApp</string>
 	<!-- ĐỒNG BỘ với app/dist/control (CI ghi đè theo Version của gói lúc build). -->
 	<key>CFBundleVersion</key>
-	<string>0.7.4</string>
+	<string>1.0.48</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.7.4</string>
+	<string>1.0.48</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSRequiresIPhoneOS</key>

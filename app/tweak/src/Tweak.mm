@@ -362,6 +362,15 @@ static NSString *IAType(NSString *text) {
     return diag;
 }
 // ---- KEY: phím đặc biệt vào ô đang focus. BACK=xoá lùi (deleteBackward), RETURN=xuống dòng ----
+static NSString *IATypeB64(NSString *b64) {
+    NSData *d = b64.length ? [[NSData alloc] initWithBase64EncodedString:b64
+                              options:NSDataBase64DecodingIgnoreUnknownCharacters] : [NSData data];
+    if (!d) return @"ERR type base64 invalid";
+    NSString *text = [[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+    if (!text) return @"ERR type UTF-8 invalid";
+    return IAType(text);
+}
+
 static NSString *IAKey(NSString *name) {
     __block NSString *diag = @"ERR";
     dispatch_sync(dispatch_get_main_queue(), ^{
@@ -1875,7 +1884,7 @@ static NSString *IAWebFill(NSString *b64field, NSString *b64value) {
         return @"ERR webfill: cần app foreground (không phải màn hình chính)";
     if (!b64field) b64field = @"";
     if (!b64value) b64value = @"";
-    __block NSString *result = @"ERR webfill no-webview";
+    __block NSString *result = @"SKIP webfill no-webview";
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
@@ -1884,7 +1893,7 @@ static NSString *IAWebFill(NSString *b64field, NSString *b64value) {
             if (!wv && win.windowScene)
                 for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
             SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
-            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webfill no-webview"; dispatch_semaphore_signal(sem); return; }
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"SKIP webfill no-webview"; dispatch_semaphore_signal(sem); return; }
             NSString *js = [NSString stringWithFormat:
                 @"(function(bf,bv){"
                 "function d(b){try{return decodeURIComponent(escape(atob(b)));}catch(e){return atob(b);}}"
@@ -1980,7 +1989,7 @@ static NSString *IAWebType(NSString *b64field, NSString *b64value) {
         if (!wv && win.windowScene)
             for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
     });
-    if (!wv || ![wv respondsToSelector:ejs]) return @"ERR webtype no-webview";
+    if (!wv || ![wv respondsToSelector:ejs]) return @"SKIP webtype no-webview";
 
     // 2) SETUP: tìm el, focus, xoá value cũ, STASH el/val/setter lên window (dùng lại cho từng phím).
     //    Trả 'noel' | 'noopt' | 'select:<v>' (xong luôn) | số ký tự cần gõ.
@@ -2080,7 +2089,7 @@ static NSString *IAWebScrollTo(NSString *b64field) {
     if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
         return @"ERR webswipe: cần app foreground (không phải màn hình chính)";
     if (!b64field) b64field = @"";
-    __block NSString *result = @"ERR webswipe no-webview";
+    __block NSString *result = @"SKIP webswipe no-webview";
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
@@ -2089,7 +2098,7 @@ static NSString *IAWebScrollTo(NSString *b64field) {
             if (!wv && win.windowScene)
                 for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
             SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
-            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webswipe no-webview"; dispatch_semaphore_signal(sem); return; }
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"SKIP webswipe no-webview"; dispatch_semaphore_signal(sem); return; }
             NSString *js = [NSString stringWithFormat:
                 @"(function(bf){"
                 "function d(b){try{return decodeURIComponent(escape(atob(b)));}catch(e){return atob(b);}}"
@@ -2140,7 +2149,7 @@ static NSString *IAWebCoord(NSString *b64field) {
     if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
         return @"ERR webcoord: cần app foreground";
     if (!b64field) b64field = @"";
-    __block NSString *result = @"ERR webcoord no-webview";
+    __block NSString *result = @"SKIP webcoord no-webview";
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
@@ -2149,7 +2158,7 @@ static NSString *IAWebCoord(NSString *b64field) {
             if (!wv && win.windowScene)
                 for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
             SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
-            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webcoord no-webview"; dispatch_semaphore_signal(sem); return; }
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"SKIP webcoord no-webview"; dispatch_semaphore_signal(sem); return; }
             NSString *js = [NSString stringWithFormat:
                 @"(function(bf){"
                 "function d(b){try{return decodeURIComponent(escape(atob(b)));}catch(e){return atob(b);}}"
@@ -2211,7 +2220,7 @@ static NSString *IAWebClick(NSString *b64field) {
     if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
         return @"ERR webclick: cần app foreground (không phải màn hình chính)";
     if (!b64field) b64field = @"";
-    __block NSString *result = @"ERR webclick no-webview";
+    __block NSString *result = @"SKIP webclick no-webview";
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
@@ -2220,7 +2229,7 @@ static NSString *IAWebClick(NSString *b64field) {
             if (!wv && win.windowScene)
                 for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
             SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
-            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webclick no-webview"; dispatch_semaphore_signal(sem); return; }
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"SKIP webclick no-webview"; dispatch_semaphore_signal(sem); return; }
             // JS: tìm element (querySelector → thuộc tính/label → text), cuộn tới giữa màn, rồi dispatch
             // chuỗi sự kiện chạm-đủ (pointerdown→touchstart→mousedown→pointerup→touchend→mouseup) cho
             // site nghe gesture, sau đó el.click() 1 LẦN để kích hoạt hành động mặc định (link/onclick).
@@ -2293,7 +2302,7 @@ static NSString *IAWebCheck(NSString *b64field) {
     // ----- Pha A (main): tìm checkbox, cuộn tới giữa màn, lấy tọa độ tap target + trạng thái checked.
     //       Stash input lên window.__iacb để pha C đọc/click lại. -----
     __block UIView *wv = nil;
-    __block NSString *result = @"ERR webcheck no-webview";
+    __block NSString *result = @"SKIP webcheck no-webview";
     __block CGPoint screenPt = CGPointZero;
     __block BOOL found = NO, alreadyChecked = NO;
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
@@ -2303,7 +2312,7 @@ static NSString *IAWebCheck(NSString *b64field) {
             wv = win ? IAFindWebView(win) : nil;
             if (!wv && win.windowScene)
                 for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
-            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webcheck no-webview"; dispatch_semaphore_signal(sem); return; }
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"SKIP webcheck no-webview"; dispatch_semaphore_signal(sem); return; }
             NSString *js = [NSString stringWithFormat:
                 @"(function(bf){"
                 "function d(b){try{return decodeURIComponent(escape(atob(b)));}catch(e){return atob(b);}}"
@@ -2380,7 +2389,7 @@ static NSString *IAWebCheck(NSString *b64field) {
 static NSString *IAWebReadyState(void) {
     if ([[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"])
         return @"ERR webstate: cần app foreground (không phải màn hình chính)";
-    __block NSString *result = @"ERR webstate no-webview";
+    __block NSString *result = @"SKIP webstate no-webview";
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     dispatch_async(dispatch_get_main_queue(), ^{
         @try {
@@ -2389,7 +2398,7 @@ static NSString *IAWebReadyState(void) {
             if (!wv && win.windowScene)
                 for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
             SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
-            if (!wv || ![wv respondsToSelector:ejs]) { result = @"ERR webstate no-webview"; dispatch_semaphore_signal(sem); return; }
+            if (!wv || ![wv respondsToSelector:ejs]) { result = @"SKIP webstate no-webview"; dispatch_semaphore_signal(sem); return; }
             NSString *js = @"(function(){try{return document.readyState;}catch(e){return 'err';}})()";
             void (^cb)(id, id) = ^(id res, id err) {
                 if (err) result = [@"ERR webstate " stringByAppendingString:[err description]];
@@ -2426,7 +2435,7 @@ static NSString *IAWebEval(NSString *b64js) {
             if (!wv && win.windowScene)
                 for (UIWindow *w in win.windowScene.windows) { wv = IAFindWebView(w); if (wv) break; }
             SEL ejs = NSSelectorFromString(@"evaluateJavaScript:completionHandler:");
-            if (!wv || ![wv respondsToSelector:ejs]) { err = @"no-webview"; dispatch_semaphore_signal(sem); return; }
+            if (!wv || ![wv respondsToSelector:ejs]) { err = @"SKIP webeval no-webview"; dispatch_semaphore_signal(sem); return; }
             // Bọc: chạy JS người dùng trong 1 hàm (cho phép nhiều câu lệnh + return) → LUÔN trả string.
             NSString *wrapped = [NSString stringWithFormat:
                 @"(function(){try{var r=(function(){%@\n})();"
@@ -2443,6 +2452,7 @@ static NSString *IAWebEval(NSString *b64js) {
     });
     if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC))) != 0)
         return @"ERR webeval: timeout";
+    if ([err hasPrefix:@"SKIP"]) return err;
     if (err) return [@"ERR webeval " stringByAppendingString:err];
     if ([out hasPrefix:@"__ERR__"]) return [@"ERR webeval " stringByAppendingString:[out substringFromIndex:7]];
     out = out ?: @"";
@@ -2842,7 +2852,7 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
     // OCRIMG KHÔNG gate: ảnh do SpringBoard chụp được truyền vào (tự chứa) → app foreground/nền
     // nào chạy Vision cũng cho kết quả như nhau; daemon ưu tiên app mới nhất (foreground). Gate
     // sẽ khiến app foreground SKIP nếu applicationState chưa Active kịp → OCRIMG rơi xuống SpringBoard.
-    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBCHECK", @"WEBSTATE", @"WEBEVAL"]]; });
+    dispatch_once(&io, ^{ interact = [NSSet setWithArray:@[@"TAP", @"SWIPE", @"TAPSE", @"PTR", @"TYPE", @"TYPEB64", @"KEY", @"HOME", @"DUMP", @"OCR", @"TOASTB64", @"WEBFILL", @"WEBTYPE", @"WEBSWIPE", @"WEBCLICK", @"WEBCOORD", @"WEBCHECK", @"WEBSTATE", @"WEBEVAL"]]; });
     BOOL isSB = [[[NSBundle mainBundle] bundleIdentifier] isEqualToString:@"com.apple.springboard"];
     if (!isSB && [interact containsObject:verb] && ![self isForeground])
         return @"SKIP not-foreground";
@@ -2864,6 +2874,8 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
             return IATapSendEvent(CGPointMake([p[1] floatValue], [p[2] floatValue]));
         if ([verb isEqualToString:@"PTR"] && p.count >= 4)
             return IAPointer([p[1] characterAtIndex:0], CGPointMake([p[2] floatValue], [p[3] floatValue]));
+        if ([verb isEqualToString:@"TYPEB64"])
+            return IATypeB64(p.count >= 2 ? p[1] : @"");
         if ([verb isEqualToString:@"TYPE"] && cmd.length > 5)
             return IAType([cmd substringFromIndex:5]);   // toàn bộ sau "TYPE "
         if ([verb isEqualToString:@"KEY"] && p.count >= 2)
@@ -2975,6 +2987,7 @@ static void IARefreshScreenSize(void) { IARefreshScreenSizeWait(NO); }
         ssize_t n = read(fd, buf, sizeof(buf) - 1);
         if (n <= 0) break;
         buf[n] = '\0'; acc += buf;
+        if (acc.size() > 96 * 1024) break;
         size_t nl;
         bool dead = false;
         while ((nl = acc.find('\n')) != std::string::npos) {

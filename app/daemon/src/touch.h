@@ -23,6 +23,7 @@ int touch_pointer(char phase, int x, int y, char *err, size_t err_len);
 
 // Gửi verb thô tới tweak (vd "DUMP", "PING") — để debug.
 int touch_raw(const char *line, char *err, size_t err_len);
+int touch_type(const char *text, char *err, size_t err_len);
 
 // App Switcher (Home 2 lần) → SpringBoard (prefer_sb=1). 0=OK.
 int touch_switcher(char *err, size_t err_len);
@@ -80,6 +81,7 @@ int touch_safari_fill(const char *field, const char *value, char *reply, size_t 
 // native setter, thay vì đặt cả chuỗi 1 phát như safari.fill → khó bị anti-bot phát hiện hơn. field
 // khớp giống safari.fill. reply nhận diag ("OK webtype <tag>" / "ERR ..."). Trả 0 nếu OK.
 int touch_safari_type(const char *field, const char *value, char *reply, size_t rlen);
+int sthid_type(const char *utf8);
 
 // safari.swipe (ẨN): cuộn WKWebView của app foreground tới element web khớp `field` (đưa ra giữa
 // màn qua scrollIntoView). field khớp giống safari.fill + cả text hiển thị/button/link. reply nhận

@@ -58,7 +58,8 @@ async function pool(items, limit, worker, onProgress) {
 }
 
 // Quét toàn bộ subnet. onProgress(done,total,found) tuỳ chọn (theo tiến trình pha 1).
-async function scan({ port = WIFI_PORT, timeout = 350, concurrency = 512, onProgress } = {}) {
+// concurrency giảm từ 512 → 64 để tránh spam mạng gây lỗi (RST flood, router chặn).
+async function scan({ port = WIFI_PORT, timeout = 350, concurrency = 64, onProgress } = {}) {
   const subs = localSubnets();
   const hosts = [];
   for (const s of subs) for (let i = 1; i <= 254; i++) hosts.push(`${s}.${i}`);
@@ -73,7 +74,8 @@ async function scan({ port = WIFI_PORT, timeout = 350, concurrency = 512, onProg
   );
 
   // Pha 2: xác nhận là daemon + lấy thông tin (chỉ vài IP → cho timeout rộng hơn chút).
-  await pool(openHosts, 32, async (ip) => {
+  // Giảm concurrency từ 32 → 8 để tránh spam HTTP request.
+  await pool(openHosts, 8, async (ip) => {
     const st = await daemon.status(ip, port, 2500);
     if (st && st.ok && st.device) {
       const dev = toDevice(ip, port, st);

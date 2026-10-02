@@ -46,6 +46,7 @@ static NSUInteger const HIDMaxTouchCount = 30;
 - (void)keyPress:(NSString *)character;
 - (void)keyDown:(NSString *)character;
 - (void)keyUp:(NSString *)character;
+- (BOOL)typeText:(NSString *)text;
 
 @end
 

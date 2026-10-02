@@ -1,6 +1,7 @@
 "use strict";
 
 import RFB from './novnc/core/rfb.js';
+import { openDumpInspector, closeDumpInspector } from './dump-inspector.js?v=20261001-bounds';
 
 // Toạ độ logic (điểm) — lấy từ /api/status (màn thật, vd 375x667).
 const LOGICAL = { w: 375, h: 667 };
@@ -37,6 +38,7 @@ function startStream() {
     rfb.resizeSession = false;
     rfb.clipViewport = false;
     rfb.viewOnly = false;  // cho phép điều khiển qua VNC
+    rfb.focusOnClick = false;
 
     rfb.addEventListener('connect', () => {
       vncContainer.style.display = "block";
@@ -158,9 +160,27 @@ let kbAuto = true;
 let kbComposing = false;
 
 function kbUpdateBtn() { kbBtn.classList.toggle("on", kbAuto); }
-function kbFocus() { if (kbAuto) try { kbCapture.focus({ preventScroll: true }); } catch (e) {} }
-kbBtn.onclick = () => { kbAuto = !kbAuto; kbUpdateBtn(); if (kbAuto) kbFocus(); else kbCapture.blur(); };
+function kbFocus() { try { kbCapture.focus({ preventScroll: true }); } catch (e) {} }
+// The keyboard capture must remain enabled: otherwise a previous click on this
+// button leaves Ctrl+V focused in the code editor instead of the device.
+kbBtn.onclick = kbFocus;
 kbUpdateBtn();
+
+function kbFocusAfterVncInput() { setTimeout(kbFocus, 0); }
+// noVNC stops bubbling for its input events, so this must run in capture phase.
+vncContainer.addEventListener("mousedown", kbFocusAfterVncInput, true);
+vncContainer.addEventListener("touchstart", kbFocusAfterVncInput, { capture: true, passive: true });
+
+// noVNC prevents Ctrl/Cmd+V while its canvas owns focus. Intercept the shortcut
+// before it reaches noVNC, switch focus to the clipboard capture, and leave the
+// browser's normal paste action intact.
+window.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "v") return;
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+  kbFocus();
+  e.stopImmediatePropagation();
+}, true);
 
 async function kbType(text) { if (text) try { await api("type", { text }); } catch (e) {} }
 async function kbKey(name) { try { await api("touchcmd", { cmd: "KEY " + name }); } catch (e) {} }
@@ -184,7 +204,7 @@ document.addEventListener("paste", (e) => {
   if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
   const txt = (e.clipboardData || window.clipboardData) && (e.clipboardData || window.clipboardData).getData("text");
   if (txt) { e.preventDefault(); kbType(txt); }
-});
+}, true);
 
 // ---- Script Lua ----
 const scriptBox = $("#scriptBox");
@@ -587,6 +607,7 @@ $("#miOcr").onclick = () => { helperMenu.hidden = true; runOcr(); };
 // Dump XML
 $("#miDump").onclick = async () => {
   helperMenu.hidden = true;
+  if (closeDumpInspector()) return;
   logTitle.textContent = "🧬 Dump XML";
   scriptOut.textContent = "🧬 đang lấy cây view…";
   try {
@@ -594,7 +615,9 @@ $("#miDump").onclick = async () => {
     const t = await res.text();
     scriptOut.textContent = t;
     scriptOut.scrollTop = 0;
-  } catch (e) { scriptOut.textContent = "Dump lỗi kết nối"; }
+    if (!res.ok) throw new Error(t);
+    openDumpInspector(t);
+  } catch (e) { scriptOut.textContent = "Dump lỗi: " + e.message; }
 };
 
 // ---- Panel helper: app ----

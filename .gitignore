@@ -24,3 +24,8 @@ mjpeg*.bin
 
 # Job scripts (bản nháp cục bộ — không đưa lên repo)
 Job/
+Demo/XSMMJob/
+BuildToolElectron/XSMM/
+
+# Deploy connection creds (plaintext passwords - do not push)
+.claude/skills/deploy-connections/

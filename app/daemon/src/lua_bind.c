@@ -156,12 +156,36 @@ static int l_drag(lua_State *L) {
     lua_pushboolean(L, rc == 0);
     return 1;
 }
-// input(text) — gõ vào ô nhập đang focus
+// input(text) — gõ vào ô nhập đang focus. Ưu tiên UIKit/native; nếu field là WebView và UIKit
+// không tìm thấy first-responder, gõ qua DOM vào element :focus. Báo lỗi thật nếu cả hai cách fail.
 static int l_input(lua_State *L) {
     const char *t = luaL_checkstring(L, 1);
-    char verb[520], e[256];
+    char verb[520], e[600] = {0};
     snprintf(verb, sizeof(verb), "TYPE %s", t);
-    touch_raw(verb, e, sizeof(e));
+    int rc = touch_raw(verb, e, sizeof(e));
+    if (rc == 0 && strncmp(e, "OK", 2) == 0) {
+        lua_pushboolean(L, 1);
+        lua_pushstring(L, e);
+        return 2;
+    }
+
+    if (sthid_type(t) == 0) {
+        lua_pushboolean(L, 1);
+        lua_pushstring(L, "OK system keyboard HID");
+        return 2;
+    }
+
+    char web[600] = {0};
+    int web_rc = touch_safari_type("input:focus,textarea:focus,[contenteditable=true]:focus",
+                                   t, web, sizeof(web));
+    if (web_rc == 0 && strncmp(web, "OK webtype", 10) == 0) {
+        lua_pushboolean(L, 1);
+        lua_pushstring(L, web);
+        return 2;
+    }
+
+    luaL_error(L, "input thất bại: UIKit=%s; WebView=%s; system HID không hỗ trợ chuỗi này",
+               e[0] ? e : "không có phản hồi", web[0] ? web : "không có phản hồi");
     return 0;
 }
 // launch(bundleId) → bool

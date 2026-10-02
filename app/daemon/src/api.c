@@ -637,10 +637,12 @@ int api_handle(const http_req *req, http_resp *resp) {
 
     // POST type — gõ chữ vào ô nhập đang focus.
     if (!strcmp(route, "type")) {
-        char text[512] = {0}, err[600] = {0}, verb[560];
-        json_get_str(b, bl, "text", text, sizeof(text));
-        snprintf(verb, sizeof(verb), "TYPE %s", text);
-        int rc = touch_raw(verb, err, sizeof(err));
+        char *text = malloc(48 * 1024 + 1);
+        char err[600] = {0};
+        if (!text) { resp_ok_msg(resp, 0, "oom"); return 1; }
+        if (!json_get_str(b, bl, "text", text, 48 * 1024 + 1)) text[0] = '\0';
+        int rc = touch_type(text, err, sizeof(err));
+        free(text);
         resp_ok_msg(resp, rc == 0, err);
         return 1;
     }

@@ -1,6 +1,6 @@
 Package: com.iosauto.app
 Name: iOSAuto
-Version: 0.5.2
+Version: 0.5.6
 Architecture: iphoneos-arm64
 Description: iOSAuto app GUI — mở web UI điều khiển + hiện IP LAN.
 Maintainer: iOSAuto Team

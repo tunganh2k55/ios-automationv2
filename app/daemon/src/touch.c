@@ -339,9 +339,19 @@ int touch_shot(char *reply, size_t rlen) {
 }
 
 int touch_tap(int x, int y, char *err, size_t err_len) {
+    // Ưu tiên HID system-level: event đi qua IOHIDEventSystemClient nên được định tuyến tới
+    // app/WebContent foreground giống ngón tay thật (có thể focus input và mở bàn phím Safari).
+    // Nếu private IOKit không khả dụng thì mới fallback về tweak in-process cũ.
+    if (sthid_available()) {
+        log_msg("tap (%d, %d) → system HID", x, y);
+        sthid_tap((float)x, (float)y);
+        snprintf(err, err_len, "OK system-hid (%d,%d)", x, y);
+        return 0;
+    }
+
     char verb[64];
     snprintf(verb, sizeof(verb), "TAP %d %d\n", x, y);
-    log_msg("tap (%d, %d) → tweak", x, y);
+    log_msg("tap (%d, %d) → tweak fallback", x, y);
     return send_verb(verb, err, err_len);
 }
 
@@ -438,6 +448,27 @@ static char *b64_encode(const unsigned char *in, size_t len, size_t *out_len) {
 // foreground để Vision (ANE của app chạy được; SpringBoard thì crash). Reply "OK ocr <path>"
 // với path là file JSON trong container app — daemon (root) đọc được. Trả 0 nếu OK.
 // SPIKE VideoToolbox: quay H.264 trong SpringBoard (prefer_sb=1). Block ~seconds giây → timeout dài.
+
+int touch_type(const char *text, char *err, size_t err_len) {
+    if (!text) text = "";
+    size_t text_len = strlen(text);
+    if (text_len > 48 * 1024) {
+        snprintf(err, err_len, "text exceeds 48 KiB");
+        return 1;
+    }
+    size_t b64len = 0;
+    char *b64 = b64_encode((const unsigned char *)text, text_len, &b64len);
+    if (!b64) { snprintf(err, err_len, "oom base64"); return 1; }
+    size_t vlen = 8 + b64len + 2;
+    char *verb = malloc(vlen);
+    if (!verb) { free(b64); snprintf(err, err_len, "oom verb"); return 1; }
+    snprintf(verb, vlen, "TYPEB64 %s\n", b64);
+    free(b64);
+    log_msg("type: %zu byte -> tweak (TYPEB64)", text_len);
+    int r = send_verb_core(verb, err, err_len, 1, 0);
+    free(verb);
+    return r;
+}
 
 int touch_toast(const char *text, double duration, char *err, size_t err_len) {
     if (!text) text = "";

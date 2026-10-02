@@ -833,14 +833,14 @@ local function processOne(key, accountNum)
     notify("[#" .. accountNum .. "] ===== LOGIN THÀNH CÔNG =====", 3)
 
     -- Step 13: Mở trang apply
-    notify("[#" .. accountNum .. "] Mở trang chyusen apply...", 3)
-    local okApplyPage, applyPageDiag = openAndWait(APPLY_URL, 30, 3)
-    if not okApplyPage then
-        failReason = "mở trang apply lỗi: " .. tostring(applyPageDiag)
-        notify("[#" .. accountNum .. "] " .. failReason, 3)
-        uploadResult(key, id, "failed: " .. failReason, "failed")
-        return "CONTINUE", rec
-    end
+    -- notify("[#" .. accountNum .. "] Mở trang chyusen apply...", 3)
+    -- local okApplyPage, applyPageDiag = openAndWait(APPLY_URL, 30, 3)
+    -- if not okApplyPage then
+    --     failReason = "mở trang apply lỗi: " .. tostring(applyPageDiag)
+    --     notify("[#" .. accountNum .. "] " .. failReason, 3)
+    --     uploadResult(key, id, "failed: " .. failReason, "failed")
+    --     return "CONTINUE", rec
+    -- end
 
     -- Step 14: Ứng tuyển các items trong LIST
     notify(string.format("[#%d] Ứng tuyển %d items: %s", accountNum, #LIST, table.concat(LIST, ", ")), 3)
