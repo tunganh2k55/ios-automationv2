@@ -1,0 +1,6 @@
+# Repo APT: KHÔNG đổi EOL metadata (giữ hash Release khớp Packages), .deb/.gz nhị phân.
+Packages      -text
+Release       -text
+Packages.gz   binary
+*.deb         binary
+CydiaIcon.png binary
